@@ -13,3 +13,16 @@ const matrixClient = sdk.createClient({
 matrixClient.getJoinedRooms().then((joined_rooms) => {
   console.log("Joined Rooms: ", joined_rooms);
 });
+
+const testRoomId = "!koVStwyiiKcBVbXZYz:matrix.org";
+
+const content = {
+    "body": "Hello World",
+    "msgtype": "m.text"
+};
+
+matrixClient.sendEvent(testRoomId, "m.room.message", content, "").then((res) => {
+   // message sent successfully
+}).catch((err) => {
+    console.log(err);
+});
