@@ -17,10 +17,10 @@
 #define SIG_LEN 128 // 86
 #define TMP_LEN 1024*4
 
-const char *uToken = "syt_cHNjaG8_lPLjYLphLXBJVgTBbsEn_1tVbV1";
-const char *uTokenHeaderStr = "Authorization: Bearer syt_cHNjaG8_lPLjYLphLXBJVgTBbsEn_1tVbV1";
-const char *uId = "@psch:matrix.org";
-const char *deviceId = "JLAFKJWSCS";
+const char *uToken = "syt_cHNjaG8_qhJLdIEMIYbbpYmRrkGJ_0iIj6h";
+const char *uTokenHeaderStr = "Authorization: Bearer syt_cHNjaG8_qhJLdIEMIYbbpYmRrkGJ_0iIj6h";
+const char *uId = "@pscho:matrix.org";
+const char *deviceId = "YQOQWPCJNP";
 
 
 
@@ -229,6 +229,13 @@ random_bytes(size_t len) {
     return random;
 }
 
+void prettyPrint(const char *s, size_t n) {
+    char *printBuf = NULL;
+    mjson_pretty(s, n, "  ", mjson_print_dynamic_buf, &printBuf);
+    printf("%s\n", printBuf);
+    free(printBuf);
+}
+
 OlmAccount *
 create_olm_account() {
     void *olmAccBuffer = malloc(olm_account_size()); // free on callsite
@@ -321,7 +328,7 @@ void getDeviceKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *devi
             "\"algorithms\":[\"m.olm.v1.curve25519-aes-sha2\",\"m.megolm.v1.aes-sha2\"],"
             "\"device_id\":\"%s\","
             "\"keys\":%s,"
-            "\"user_id\":\"3\""
+            "\"user_id\":\"%s\""
         "}",
         deviceId, keysStr, uId);
 
@@ -382,35 +389,33 @@ void upload_keys(CURL *curl, OlmAccount *olmAcc, const char *deviceKeys, const c
     char onetimeKeysStr[TMP_LEN];
     getOnetimeKeysString(olmAcc, onetimeKeysStr, TMP_LEN, onetimeKeys);
 
-    char msg[TMP_LEN];
+    char msg[TMP_LEN] = "{}";
     mjson_snprintf(msg, TMP_LEN,
         "{\n"
-        "  \"device_keys\": %s,\n"
-        "  \"fallback_keys\": %s,\n"
-        "  \"one_time_keys\": %s\n"
+        "  \"device_keys\": %s\n"
+        //"  \"fallback_keys\": %s,\n"
+        //"  \"one_time_keys\": %s\n"
         "}",
         deviceKeysStr,
         fallbackKeysStr,
         onetimeKeysStr);
 
-    char printBuf[TMP_LEN];
-    struct mjson_fixedbuf printRes = { printBuf, TMP_LEN, 0 };
-    mjson_pretty(msg, strlen(msg), "  ", mjson_print_fixed_buf, &printRes);
-    printf("%s\n", printBuf);
+    prettyPrint(msg, strlen(msg));
 
-    // CurlStr res = curlPost(curl, "https://matrix.org/_matrix/client/r0/keys/upload", msg);
-    // curlStringPrint(&res);
-    // curlStringDelete(&res);
+    CurlStr res = curlPost(curl, "https://matrix.org/_matrix/client/r0/keys/upload", msg);
+    prettyPrint(res.str, res.size);
+    curlStringDelete(&res);
 }
 
-void olm() {
+void olm(CURL *curl) {
     OlmAccount *olmAcc = create_olm_account();
     
     void *deviceKeys = create_device_keys(olmAcc);
     void *fallbackKeys = create_onetime_keys(olmAcc, 2);
     void *onetimeKeys = create_onetime_keys(olmAcc, 2);
 
-    upload_keys(NULL, olmAcc, deviceKeys, fallbackKeys, onetimeKeys);
+    upload_keys(curl, olmAcc, deviceKeys, fallbackKeys, onetimeKeys);
+    //upload_keys(curl, olmAcc, deviceKeys, NULL, NULL);
 
     free(deviceKeys);
     free(fallbackKeys);
@@ -419,24 +424,61 @@ void olm() {
     free((void *)olmAcc);
 }
 
+/*
+TODO:
+- decrypt events
+- start megolm session
+  - claim onetime keys
+  - distribute keys
+- receive events (/sync)
+- check if new keys needed (/sync, olm_account_max_number_of_one_time_keys / 2)
+- join room
+(- login)
+
+Plan:
+15.02: upload device keys
+16.02: decrypt room events
+17.02: start megolm session
+18.02: distribute keys
+*/
+
 int main() {
     srand(time(NULL));
 
-    olm();
-    return 0;
-
-
-    const char *roomId = "!koVStwyiiKcBVbXZYz:matrix.org";
-    const char *eventId = "$CyzpX6SWvcUEVl1ANwa4oJduLCCIybikji2cHok1Ww8";
-    
     curl_global_init(CURL_GLOBAL_DEFAULT);
     CURL *curl = curl_easy_init();
+
+    //olm(curl);
+
+    // login
+    CurlStr loginRes =
+        curlPost(curl, "https://matrix.org/_matrix/client/v3/login",
+            "{                                                   "
+            "  \"type\": \"m.login.password\",                   "
+            "  \"identifier\": {                                 "
+            "    \"type\": \"m.id.user\",                        "
+            "    \"user\": \"@pscho:matrix.org\"                 "
+            "  },                                                "
+            "  \"password\": \"Wc23EbmB9G3faMq\",                "
+            "  \"initial_device_display_name\": \"ESP32test1\"   "
+            "}                                                   "
+        );
+
+    prettyPrint(loginRes.str, loginRes.size);
+    curlStringDelete(&loginRes);
+
+    return 0;
+
+    const char *roomId = "!koVStwyiiKcBVbXZYz:matrix.org";
+    const char *eventId = "$PtOBUrec-gaTBfBuOtxkjbjARhR_Mm7AG9udjFkUcC4";
 
     //CurlStr str = curlPost("https://matrix.org/_matrix/client/r0/register?kind=guest", "{}");
 
     char url[1000];
     char msg[1000];
     char body[1000];
+
+    // receive messages
 
     sprintf(url, "https://matrix.org/_matrix/client/r0/rooms/%s/context/%s?limit=100", roomId, eventId);
 
@@ -446,7 +488,19 @@ int main() {
     printf("%s\n", test);
     curlStringDelete(&str);
 
-    while (1) {
+    // server state
+
+    // CurlStr syncRes = curlGet(curl, "https://matrix.org/_matrix/client/v3/sync");
+    // curlStringPrint(&syncRes);
+    // curlStringDelete(&syncRes);
+
+    // get room user/device list
+    
+    CurlStr membersRes = curlPost(curl, "https://matrix.org/_matrix/client/v3/keys/query", "{\"device_keys\":{\"@pscho:matrix.org\":[]}}");
+    prettyPrint(membersRes.str, membersRes.size);
+    curlStringDelete(&membersRes);
+
+    while (0) {
         sprintf(url, "https://matrix.org/_matrix/client/r0/rooms/%s/send/m.room.message/%d", roomId, time(NULL));
 
         getline(msg, 1000);
@@ -462,6 +516,8 @@ int main() {
         curlStringPrint(&str);
         curlStringDelete(&str);
     }
+
+    puts("done");
     
     curl_easy_cleanup(curl);
     curl_global_cleanup();
