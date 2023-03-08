@@ -26,7 +26,8 @@ if [[ "$*" == *"-o"* ]]; then
     gcc -c ext/mjson/src/mjson.c -o out/mjson.o
 fi
 
-gcc -o out/main.exe main.c ${INCLUDES[*]} ${LIBPATHS[*]} ${LIBS[*]} ${OBJS[*]}
+#clang -fuse-ld=lld.exe -g -gcodeview -Wl,/debug,/pdb:out/main.pdb -o out/main.exe main.c ${INCLUDES[*]} ${LIBPATHS[*]} ${LIBS[*]} ${OBJS[*]}
+g++ -g -o out/main.exe main.c ${INCLUDES[*]} ${LIBPATHS[*]} ${LIBS[*]} ${OBJS[*]}
 
 
 if [[ "$*" == *"-run"* ]]; then
