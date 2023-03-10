@@ -204,19 +204,6 @@ curlGet(CURL *curl, const char *url) {
     return result;
 }
 
-// cli
-//----
-
-void getLine(char *buffer, size_t size) {
-    int i = 0;
-    char c = getchar();
-    while (c != '\n' && i < size-1) {
-        buffer[i++] = c;
-        c = getchar();
-    }
-    buffer[i] = '\0';
-}
-
 // utility
 //--------
 
@@ -320,7 +307,7 @@ generateOnetimeKeys(OlmAccount *olmAcc, size_t nKeys) {
 }
 
 void *
-getOnetimeKeys(OlmAccount *olmAcc, size_t nKeys) {
+getOnetimeKeys(OlmAccount *olmAcc) {
     size_t onetimeKeysLen = olm_account_one_time_keys_length(olmAcc);
     void *onetimeKeys = malloc(onetimeKeysLen);
     
@@ -466,6 +453,227 @@ void uploadKeys(CURL *curl, OlmAccount *olmAcc, const char *deviceKeys, const ch
     curlStringDelete(&res);
 }
 
+CurlStr
+login(CURL *curl, const char *userId, const char *password, const char *deviceDisplayName) {
+    char msg[TMP_LEN];
+    mjson_snprintf(msg, TMP_LEN,
+            "{                                                   "
+            "  \"type\": \"m.login.password\",                   "
+            "  \"identifier\": {                                 "
+            "    \"type\": \"m.id.user\",                        "
+            "    \"user\": \"%s\"                 "
+            "  },                                                "
+            "  \"password\": \"%s\",                "
+            "  \"initial_device_display_name\": \"%s\"   "
+            "}                                                   ",
+            userId, password, deviceDisplayName
+    );
+    CurlStr loginRes =
+        curlPost(curl, "https://matrix.org/_matrix/client/v3/login", msg);
+
+    return loginRes;
+}
+
+CurlStr
+claimOnetimeKey(CURL *curl, const char *deviceId) {
+    char msg[TMP_LEN];
+    mjson_snprintf(msg, TMP_LEN,
+        "{"
+            "\"one_time_keys\":{"
+                "\"@pscho:matrix.org\":{"
+                    "\"%s\":\"signed_curve25519\""
+                "}"
+            "},"
+            "\"timeout\":10000"
+        "}", deviceId);
+    CurlStr res =
+        curlPost(curl, "https://matrix.org/_matrix/client/v3/keys/claim",
+            msg);
+    return res;
+}
+
+OlmSession *
+createOlmSession(OlmAccount *olmAcc, const char *deviceKey, const char *onetimeKey) {
+    OlmSession *olmSession = olm_session(malloc(olm_session_size()));
+    void *olmSessionRandom = randomBytes(olm_create_outbound_session_random_length(olmSession));
+    size_t olmSessionRes =
+        olm_create_outbound_session(
+            olmSession, olmAcc,
+            deviceKey, 43,
+            onetimeKey, 43,
+            olmSessionRandom,
+            olm_create_outbound_session_random_length(olmSession));
+    return olmSession;
+}
+
+OlmSession *
+loadOlmSession(const char *filename, const char *key) {
+    OlmSession *olmSession = olm_session(malloc(olm_session_size()));
+    FILE *f = fopen(filename, "rb");
+    fseek(f, 0, SEEK_END);
+    long filesize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buffer = (char *)malloc(filesize);
+    fwrite(buffer, 1, filesize, f);
+    fclose(f);
+    olm_unpickle_session(olmSession, key, strlen(key), buffer, filesize);
+    free(buffer);
+
+    return olmSession;
+}
+
+void
+saveOlmSession(OlmSession *olmSession, const char *filename, const char *key) {
+    size_t olmSessionBufferLength = olm_pickle_session_length(olmSession);
+    void *olmSessionBuffer = malloc(olmSessionBufferLength);
+    olm_pickle_session(olmSession, key, strlen(key), olmSessionBuffer, olmSessionBufferLength);
+    FILE *f = fopen(filename, "wb");
+    fwrite(olmSessionBuffer, 1, olmSessionBufferLength, f);
+    fclose(f);
+}
+
+bool
+checkOlmSession(OlmSession *olmSession, const char *encrypted) {
+    char *buffer = strdup(encrypted);
+
+    size_t res =
+        olm_matches_inbound_session(
+            olmSession,
+            buffer,
+            strlen(buffer));
+
+    free(buffer);
+
+    return res == 1;
+}
+
+bool tryNewSession(OlmSession *olmSession, OlmAccount *olmAcc, const char *deviceKey, const char *encrypted) {
+    char *buffer = strdup(encrypted);
+    size_t res =
+        olm_create_inbound_session_from(
+            olmSession, olmAcc,
+            deviceKey, 43,
+            buffer, strlen(buffer));
+
+    free(buffer);
+
+    return res == 1;
+}
+
+void
+decrypt(OlmSession *olmSession, const char *encrypted) {
+    size_t msgType = 0;
+
+    char *buffer = strdup(encrypted);
+
+    size_t decryptedBufferMaxLength =
+        olm_decrypt_max_plaintext_length(
+            olmSession, msgType, buffer, strlen(buffer));
+
+    free(buffer);
+    buffer = strdup(encrypted);
+
+    char *decryptedBuffer = (char *)malloc(decryptedBufferMaxLength);
+    size_t decryptedBufferLength =
+        olm_decrypt(
+            olmSession, msgType,
+            buffer, strlen(buffer),
+            decryptedBuffer, decryptedBufferMaxLength);
+
+    printf("[%d] %.*s\n",
+        decryptedBufferLength,
+        decryptedBufferLength,
+        decryptedBuffer);
+
+    free(buffer);
+}
+
+void *
+encrypt(OlmSession *olmSession, const char *body) {
+    size_t encryptRandomLength = olm_encrypt_random_length(olmSession);
+    void *encryptRandom = randomBytes(encryptRandomLength);
+    size_t encryptedLength = olm_encrypt_message_length(
+        olmSession, strlen(body));
+    void *encrypted = malloc(encryptedLength);
+
+    size_t encryptedWritten =
+        olm_encrypt(
+            olmSession,
+            body, strlen(body),
+            encryptRandom, encryptRandomLength,
+            encrypted, encryptedLength);
+            
+    printf("[%d/%d]\n%.*s\n", encryptedWritten, encryptedLength, encryptedLength, encrypted);
+
+
+    return encrypted;
+}
+
+char *
+createMsgEncrypted(const char *deviceKeyTo, const char *msg, const char *deviceIdFrom, const char *deviceKeyFrom) {
+    char *res = mjson_aprintf(
+        "{                                                    "
+        "    \"algorithm\": \"m.olm.v1.curve25519-aes-sha2\", "
+        "    \"ciphertext\": {                                "
+        "       \"%s\": \"%s\"                                "
+        "    },                                               "
+        "    \"device_id\": \"%s\",                           "
+        "    \"sender_key\": \"%s\"                           "
+        "}                                                    ",
+        deviceKeyTo, msg, deviceIdFrom, deviceKeyFrom
+    );
+    return res;
+}
+
+CurlStr
+sendToDevice(CURL *curl, const char *userId, const char *deviceId, const char *msgType, const char *msg) {
+    char url[TMP_LEN];
+    sprintf(url, "https://matrix.org/_matrix/client/v3/sendToDevice/%s/%d", msgType, time(NULL));
+    char *toDeviceMsg = mjson_aprintf(
+        "{                      "
+        "    \"messages\": {    "
+        "        \"%s\": {      "
+        "            \"%s\": %s "
+        "        }              "
+        "    }                  "
+        "}                      ",
+        userId, deviceId, msg);
+
+    CurlStr res = curlPut(curl, url, toDeviceMsg);
+    free(toDeviceMsg);
+
+    return res;
+}
+
+CurlStr
+sendMsgRoomKeyRequest(
+    CURL *curl,
+    const char *userId,
+    const char *deviceIdTo,
+    const char *deviceIdFrom,
+    const char *deviceKeyFrom,
+    const char *roomId,
+    const char *sessionId,
+    const char *requestId) {
+    char *msg = mjson_aprintf(
+        "{                                                                           "
+        "    \"content\": {                                                          "
+        "       \"action\": \"request\",                                             "
+        "       \"body\": {                                                          "
+        "           \"algorithm\": \"m.megolm.v1.aes-sha2\",                         "
+        "           \"room_id\": \"%s\",                                             "
+        "           \"sender_key\": \"%s\",                                          "
+        "           \"session_id\": \"%s\"                                           "
+        "       },                                                                   "
+        "       \"request_id\": \"%s\",                                              "
+        "       \"requesting_device_id\": \"%s \"                                    "
+        "    },                                                                      "
+        "    \"type\": \"m.room_key_request\"                                        "
+        "}",
+        roomId, deviceKeyFrom, sessionId, requestId, deviceIdFrom);
+    return sendToDevice(curl, userId, deviceIdTo, "m.room_key_request", msg);
+}
+
 void test_verify(OlmAccount *olmAcc) {
     const char *deviceKeyStr =
     "{                                                                                                                             "
@@ -516,7 +724,7 @@ void test_verify(OlmAccount *olmAcc) {
 }
 
 size_t
-verify(const char *json, const char *userId, const char *deviceId, const char *deviceKey) {
+verify(const char *json, size_t jsonLen, const char *userId, const char *deviceId, const char *deviceKey) {
     char *compactJson = NULL;
     mjson_pretty(json, strlen(json), "", mjson_print_dynamic_buf, &compactJson);
     OlmUtility *olmUtil = olm_utility(malloc(olm_utility_size()));
@@ -551,39 +759,33 @@ verify(const char *json, const char *userId, const char *deviceId, const char *d
     return res;
 }
 
-// "keys": {
-//     "curve25519:TJJJAWJCAM": "8aHti5ijZWhdCBnzHvA42ujwpKltcD4VyZVBBdsKaHA",
-//     "ed25519:TJJJAWJCAM": "fE6tLl9n1u6Zj53xBfZShYp/S137GM0tXwIKl9fThLA"
-// },
-// "signatures": {
-//     "@pscho:matrix.org": {
-//     "ed25519:TJJJAWJCAM": "EFKDCujOh2VMfjjBEScBDz9zK6d6pgmduRpu21XpQUGGz7hoK3lQY9h8Ze1HmGss1BqToGIZzNzhwpQiuyxpCQ"
-//     }
-// },
+// cli
+//----
 
-char *
-encrypt(OlmSession *olmSession, const char *body) {
-    char encryptedBody[1024];
-    // olm_encrypt_message_length();
-    // olm_encrypt_random_length();
-    //olm_encrypt(olmSession, body, strlen(body), random, randomLen, encryptedBody, 1024);
-    return mjson_aprintf(
-        "{                                                        "
-        "    \"type\": \"m.room.encrypted\",                      "
-        "    \"content\": {                                       "
-        "        \"algorithm\": \"m.olm.v1.curve25519-aes-sha2\", "
-        "        \"sender_key\": \"%s\",                          "
-        "        \"ciphertext\": {                                "
-        "            \"%s\": {                                    "
-        "                \"type\": 0,                             "
-        "                \"body\": %s                             "
-        "            }                                            "
-        "        }                                                "
-        "    }                                                    "
-        "}                                                        ",
-        "8aHti5ijZWhdCBnzHvA42ujwpKltcD4VyZVBBdsKaHA",
-        "0kFtwQv01nwh6NAcRfReCLvoFX/eUmeFMVmMPrBXbG8",
-        encryptedBody);
+void getLine(char *buffer, size_t size) {
+    int i = 0;
+    char c = getchar();
+    while (c != '\n' && i < size-1) {
+        buffer[i++] = c;
+        c = getchar();
+    }
+    buffer[i] = '\0';
+}
+
+bool command(const char *str, const char *cmd) {
+    return strncmp(str, cmd, strlen(cmd)) == 0;
+}
+
+int promptInt(const char *str) {
+    printf("%s: ", str);
+    int res = 0;
+    scanf("%d", &res);
+    return res;
+}
+
+void promptStr(const char *str, char *buffer) {
+    printf("%s: ", str);
+    getLine(buffer, TMP_LEN);
 }
 
 /*
@@ -603,24 +805,6 @@ int main() {
     OlmAccount *olmAcc = createOlmAccount();
     loadOlmAccount(olmAcc, "olmacc.dat", "abcde", 5);
 
-    // createAndUploadKeys(curl, olmAcc);
-
-    // login
-    // CurlStr loginRes =
-    //     curlPost(curl, "https://matrix.org/_matrix/client/v3/login",
-    //         "{                                                   "
-    //         "  \"type\": \"m.login.password\",                   "
-    //         "  \"identifier\": {                                 "
-    //         "    \"type\": \"m.id.user\",                        "
-    //         "    \"user\": \"@pscho:matrix.org\"                 "
-    //         "  },                                                "
-    //         "  \"password\": \"Wc23EbmB9G3faMq\",                "
-    //         "  \"initial_device_display_name\": \"ESP32test1\"   "
-    //         "}                                                   "
-    //     );
-
-    // prettyPrint(loginRes.str, loginRes.size);
-    // curlStringDelete(&loginRes);
 
     const char *roomId = "!UckjQsQFypaAPMoyrT:matrix.org";
     const char *eventId = "$hfGhFzbxLSqBgBevXP0a1y1Uo3ieYDkO2STxOF_2q2Y";
@@ -632,154 +816,65 @@ int main() {
     char body[1000];
 
     // server state
-
     if (0) {
     CurlStr syncRes = curlGet(curl, "https://matrix.org/_matrix/client/r0/sync");
-    const char *to_device_str;
-    int to_device_str_len;
-    //printf("%.*s\n", syncRes.size, syncRes.str);
+    const char *to_device_str; int to_device_str_len;
     mjson_find(syncRes.str, syncRes.size, "$.to_device", &to_device_str, &to_device_str_len);
     prettyPrint(to_device_str, to_device_str_len);
     curlStringDelete(&syncRes);
-    }
 
     // receive messages
-
-    // sprintf(url, "https://matrix.org/_matrix/client/r0/rooms/%s/context/%s?limit=10",
-    //     "!hzjWFevYHfPyGRVYDa:matrix.org",
-    //     "$AUX_LhWwdsPYWrN2SO_Bpw_9_I_e52gM4nl1Rly3oaw");
-    // CurlStr str = curlGet(curl, url);
-    // // char test[100];
-    // // mjson_get_string(str.str, str.size, "$.event.content.body", test, 100);
-    // // printf("%s\n", test);
-    // prettyPrint(str.str, str.size);
-    // curlStringDelete(&str);
-
+    sprintf(url, "https://matrix.org/_matrix/client/r0/rooms/%s/context/%s?limit=10",
+        "!hzjWFevYHfPyGRVYDa:matrix.org",
+        "$AUX_LhWwdsPYWrN2SO_Bpw_9_I_e52gM4nl1Rly3oaw");
+    CurlStr str = curlGet(curl, url);
+    const char *msgBody; int msgBodyLen;
+    mjson_find(str.str, str.size, "$.event.content.body", &msgBody, &msgBodyLen);
+    printf("%.*s\n", msgBodyLen, msgBody);
+    prettyPrint(str.str, str.size);
+    curlStringDelete(&str);
 
     // get room user/device list
-    
-    if (0) {
     CurlStr membersRes = curlPost(curl, "https://matrix.org/_matrix/client/v3/keys/query", "{\"device_keys\":{\"@pscho:matrix.org\":[]}}");
     prettyPrint(membersRes.str, membersRes.size);
     curlStringDelete(&membersRes);
-    }
 
     // test_verify(olmAcc);
 
-    // claim key
-    // CurlStr keysClaimRes =
-    //     curlPost(curl, "https://matrix.org/_matrix/client/v3/keys/claim",
-    //         "{"
-    //             "\"one_time_keys\":{"
-    //                 "\"@pscho:matrix.org\":{"
-    //                     "\"KHTBDQUCSC\":\"signed_curve25519\""
-    //                 "}"
-    //             "},"
-    //             "\"timeout\":10000"
-    //         "}");
-    // prettyPrint(keysClaimRes.str, keysClaimRes.size);
-    // curlStringDelete(&keysClaimRes);
+    CurlStr claimedKey = claimOnetimeKey(curl, "");
 
-    /*
-    {
-        "one_time_keys": {
-            "@pscho:matrix.org": {
-                "KHTBDQUCSC": {
-                    "signed_curve25519:AAAABA": {
-                        "key": "bvshxCCBIsIMEnGRR99qdLgiiWE1Ni/W8/YW+wfIzGk",
-                        "signatures": {
-                            "@pscho:matrix.org": {
-                            "ed25519:KHTBDQUCSC": "s6zrM8D4ldCvw7+OkjSxcLUdXRxNe9r6e2yBR1a163a26OpwBVCTUGHujpG3+D012x+16OW0lzmARftO0IVODQ"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    */
+    const char *keyObj; int keyObjLen;
+    mjson_find(claimedKey.str, claimedKey.size, "", &keyObj, &keyObjLen);
+
     size_t verifyRes =
         verify(
-        "{                                                                                                                          "
-        "    \"key\": \"bvshxCCBIsIMEnGRR99qdLgiiWE1Ni/W8/YW+wfIzGk\",                                                              "
-        "    \"signatures\": {                                                                                                      "
-        "        \"@pscho:matrix.org\": {                                                                                           "
-        "        \"ed25519:KHTBDQUCSC\": \"s6zrM8D4ldCvw7+OkjSxcLUdXRxNe9r6e2yBR1a163a26OpwBVCTUGHujpG3+D012x+16OW0lzmARftO0IVODQ\" "
-        "        }                                                                                                                  "
-        "    }                                                                                                                      "
-        "}                                                                                                                          ",
-        "@pscho:matrix\\.org", "KHTBDQUCSC", "5h4xgfwShdw/My3JhvPArp0pvKQLfKdSaMylyNQps1M"
+            keyObj, keyObjLen,
+            "@pscho:matrix\\.org",
+            "KHTBDQUCSC",
+            "5h4xgfwShdw/My3JhvPArp0pvKQLfKdSaMylyNQps1M"
         );
 
     printf("verifyRes: %d\n", verifyRes);
 
-    // start olm session
-    OlmSession *olmSession = olm_session(malloc(olm_session_size()));
+
 
     // start new olm session
-    if (0) {
-    void *olmSessionRandom = randomBytes(olm_create_outbound_session_random_length(olmSession));
-    size_t olmSessionRes =
-        olm_create_outbound_session(
-            olmSession, olmAcc,
-            "5h4xgfwShdw/My3JhvPArp0pvKQLfKdSaMylyNQps1M", 43,
-            "bvshxCCBIsIMEnGRR99qdLgiiWE1Ni/W8/YW+wfIzGk", 43,
-            olmSessionRandom, olm_create_outbound_session_random_length(olmSession));
-    
-    printf("olmSessionRes: %d\n", olmSessionRes);
-    size_t olmSessionBufferLength = olm_pickle_session_length(olmSession);
-    void *olmSessionBuffer = malloc(olmSessionBufferLength);
-    olm_pickle_session(olmSession, "abcde", 5, olmSessionBuffer, olmSessionBufferLength);
-    printf("%.*s\n", olmSessionBufferLength, olmSessionBuffer);
+    OlmSession *olmSession = createOlmSession(olmAcc, "", "");
+
+    // saveOlmSession(olmSession, "olmsess.dat", "abcde");
+    // OlmSession *olmSession = loadOlmSession("olmsess.dat", "abcde");
+
+    // try to match olm session
+    if (checkOlmSession(olmSession, "")) {
+        decrypt(olmSession, "");
     }
-
-    // restore session
-    // session: I4Ho3e/pPUStITXQ/OLMez0axmtQD4KOpPeMdv1o2tyvAkXVknKgpbZatpqQq1C0wudFtJQ4ISKDCnuUyN6Sfkw0kZSKqxpSCQH1v07cEhlRSILA9qqufXA9xiHPMw38fj63NBDNfYU074SlAPiV+PljhUgoGXMfVJlPXeUsgZwSfcs6RBRvHaaafdQE+buxK5LsQjJmTcu93XyQNVnOR5RMy39HExZtEebevsRunW/6sl0Sg8UySuoZm41uBvpT9KPAKBhx9tzFej1tEEOqKwQWGinzHxzydoStHp7ByglOf4/NmwL+uDLzSnoMB1uurrqRGBMTWEHz+SDGAGHYpjQG0btMlsDo
-    char pickledSession[] = "I4Ho3e/pPUStITXQ/OLMez0axmtQD4KOpPeMdv1o2tyvAkXVknKgpbZatpqQq1C0wudFtJQ4ISKDCnuUyN6Sfkw0kZSKqxpSCQH1v07cEhlRSILA9qqufXA9xiHPMw38fj63NBDNfYU074SlAPiV+PljhUgoGXMfVJlPXeUsgZwSfcs6RBRvHaaafdQE+buxK5LsQjJmTcu93XyQNVnOR5RMy39HExZtEebevsRunW/6sl0Sg8UySuoZm41uBvpT9KPAKBhx9tzFej1tEEOqKwQWGinzHxzydoStHp7ByglOf4/NmwL+uDLzSnoMB1uurrqRGBMTWEHz+SDGAGHYpjQG0btMlsDo";
-    olm_unpickle_session(olmSession, "", 5, (void *)pickledSession, 352);
-
-    // decrypt olm message
-    size_t encryptedBodyLength = 547;
-    char onetimeKeyMsgBody1[548] = "Awogh9xP04+ddHkoGp8bmcvAdQ1D82rVDpvVwyfSA2ELujkSIMbuF3n0mCmS/Dql8L5PGb1Ds4ArrHfOWlC4/i6ueelzGiDSQW3BC/TWfCHo0BxF9F4Iu+gVf95SZ4UxWYw+sFdsbyKwAgMKIDYgVNhJjK1HyTMpQnStgblXsPfOsD1yIqtBH7lhh/ZOEAAigAJTJvXw1lyU2ffGJ9CQV3QYCnvERk1bcyborrAKaHr9Gacu7BXHAz8a0yJe6eRyvUdj+DoImb2CRLTOM+XboU/bTRPAXYDLqOqbeqLM3Od29939gt5HIH2bEfp5w0E8stkUT2kIthSbQ0J23UCAEcjjNDCWc9caOy2wI3uIbDLlesdCmjuZXUY1TSJ/4zUN2EYxW4lDrVZsUEU8+UwWn5F83KwUQXL78wpwSZG4xxpn9YXgnoIxOgn5b3fDQKYaRMv8Gga4gVxrNxmViEG0wsPdNnKlYxciyn7YemP6962wKnUkkCCMpuRQVKbUfMJSUFfWqNbhAHIeYpMxvm/WzQoY46Nh4rnGwr4";
-    char onetimeKeyMsgBody2[548] = "Awogh9xP04+ddHkoGp8bmcvAdQ1D82rVDpvVwyfSA2ELujkSIMbuF3n0mCmS/Dql8L5PGb1Ds4ArrHfOWlC4/i6ueelzGiDSQW3BC/TWfCHo0BxF9F4Iu+gVf95SZ4UxWYw+sFdsbyKwAgMKIDYgVNhJjK1HyTMpQnStgblXsPfOsD1yIqtBH7lhh/ZOEAAigAJTJvXw1lyU2ffGJ9CQV3QYCnvERk1bcyborrAKaHr9Gacu7BXHAz8a0yJe6eRyvUdj+DoImb2CRLTOM+XboU/bTRPAXYDLqOqbeqLM3Od29939gt5HIH2bEfp5w0E8stkUT2kIthSbQ0J23UCAEcjjNDCWc9caOy2wI3uIbDLlesdCmjuZXUY1TSJ/4zUN2EYxW4lDrVZsUEU8+UwWn5F83KwUQXL78wpwSZG4xxpn9YXgnoIxOgn5b3fDQKYaRMv8Gga4gVxrNxmViEG0wsPdNnKlYxciyn7YemP6962wKnUkkCCMpuRQVKbUfMJSUFfWqNbhAHIeYpMxvm/WzQoY46Nh4rnGwr4";
-    char encryptedBody[548] = "Awogh9xP04+ddHkoGp8bmcvAdQ1D82rVDpvVwyfSA2ELujkSIMbuF3n0mCmS/Dql8L5PGb1Ds4ArrHfOWlC4/i6ueelzGiDSQW3BC/TWfCHo0BxF9F4Iu+gVf95SZ4UxWYw+sFdsbyKwAgMKIDYgVNhJjK1HyTMpQnStgblXsPfOsD1yIqtBH7lhh/ZOEAAigAJTJvXw1lyU2ffGJ9CQV3QYCnvERk1bcyborrAKaHr9Gacu7BXHAz8a0yJe6eRyvUdj+DoImb2CRLTOM+XboU/bTRPAXYDLqOqbeqLM3Od29939gt5HIH2bEfp5w0E8stkUT2kIthSbQ0J23UCAEcjjNDCWc9caOy2wI3uIbDLlesdCmjuZXUY1TSJ/4zUN2EYxW4lDrVZsUEU8+UwWn5F83KwUQXL78wpwSZG4xxpn9YXgnoIxOgn5b3fDQKYaRMv8Gga4gVxrNxmViEG0wsPdNnKlYxciyn7YemP6962wKnUkkCCMpuRQVKbUfMJSUFfWqNbhAHIeYpMxvm/WzQoY46Nh4rnGwr4";
-    size_t inboundSessionRes =
-        olm_matches_inbound_session(
-            olmSession,
-            onetimeKeyMsgBody1,
-            encryptedBodyLength);
-
-    if (inboundSessionRes == 0) {
-        printf("session did not match\n");
-        inboundSessionRes =
-            olm_create_inbound_session_from(
-                olmSession, olmAcc,
-                "0kFtwQv01nwh6NAcRfReCLvoFX/eUmeFMVmMPrBXbG8", 43,
-                onetimeKeyMsgBody2, encryptedBodyLength);
-        if (inboundSessionRes == 1) {
-            printf("remove onetime keys: %d\n",
-                olm_remove_one_time_keys(olmAcc, olmSession));
+    else {
+        if (tryNewSession(olmSession, olmAcc, "", "")) {
+            olm_remove_one_time_keys(olmAcc, olmSession);
+            decrypt(olmSession, "");
         }
     }
-    if (inboundSessionRes == 1) {
-        size_t msgType = 0;
-        printf("before: %s\n", encryptedBody);
-        size_t decryptedBufferMaxLength = olm_decrypt_max_plaintext_length(olmSession, msgType, encryptedBody, encryptedBodyLength);
-        printf("after: %s\n", encryptedBody);
-        char *decryptedBuffer = (char *)malloc(decryptedBufferMaxLength);
-        size_t decryptedBufferLength =
-            olm_decrypt(olmSession, msgType, encryptedBody, encryptedBodyLength, decryptedBuffer, decryptedBufferMaxLength);
-        printf("[%d] %.*s\n", decryptedBufferLength, decryptedBufferLength, decryptedBuffer);
-    }
-    else if (inboundSessionRes == olm_error()) {
-        printf("Error: %s\n",
-            olm_session_last_error(olmSession));
-    }
-    else if (inboundSessionRes == 0) {
-        printf("still did not match\n");
-    }
 
-
-    if (0) {
     // encrypt dummy message
     char dummyMsg[] =
         "{                                    "
@@ -792,79 +887,28 @@ int main() {
         "        }                            "
         "    }                                "
         "}                                    ";
-    size_t encryptRandomLength = olm_encrypt_random_length(olmSession);
-    void *encryptRandom = randomBytes(encryptRandomLength);
-    size_t encryptedLength = olm_encrypt_message_length(olmSession, strlen(dummyMsg));
-    void *encrypted = malloc(encryptedLength);
 
-    size_t encryptedWritten =
-        olm_encrypt(
-            olmSession,
-            dummyMsg, strlen(dummyMsg),
-            encryptRandom, encryptRandomLength,
-            encrypted, encryptedLength);
-
-    printf("[%d/%d]\n%.*s\n", encryptedWritten, encryptedLength, encryptedLength, encrypted);
+    void *dummyMsgEncrypted = encrypt(olmSession, dummyMsg);
 
     // build m.room.encrypted
-    // KHTBDQUCSC because curve key in to_device
-    char *roomEncrypted = mjson_aprintf(
-        "{                                                    "
-        "    \"algorithm\": \"m.olm.v1.curve25519-aes-sha2\", "
-        "    \"ciphertext\": {                                "
-        "       \"%.*s\": \"%.*s\"                                "
-        "    },                                               "
-        "    \"device_id\": \"%.*s\",                         "
-        "    \"sender_key\": \"%.*s\"                         "
-        "}                                                    ",
-        43, "0kFtwQv01nwh6NAcRfReCLvoFX/eUmeFMVmMPrBXbG8",
-        encryptedLength, encrypted,
-        strlen(deviceId), deviceId,
-        43, "8aHti5ijZWhdCBnzHvA42ujwpKltcD4VyZVBBdsKaHA"
-    );
+    createMsgEncrypted("", "", "", "");
 
     // send to_device
 
-    sprintf(url, "https://matrix.org/_matrix/client/v3/sendToDevice/%s/%d", "m.room.encrypted", time(NULL));
-    char *toDeviceMsg = mjson_aprintf(
-        "{                                                                                       "
-        "    \"messages\": {                                                                     "
-        "        \"@pscho:matrix.org\": {                                                        "
-        "            \"KHTBDQUCSC\": %s                                                          "
-        "        }                                                                               "
-        "    }                                                                                   "
-        "}                                                                                       ",
-        roomEncrypted);
-    CurlStr dummyRes = curlPut(curl, url, toDeviceMsg);
-    prettyPrint(dummyRes.str, dummyRes.size);
+    sendToDevice(curl, "", "", "", "");
 
     // send m.room_key_request to device
-    sprintf(url, "https://matrix.org/_matrix/client/v3/sendToDevice/%s/%d", "m.room_key_request", time(NULL));
-    CurlStr roomKeyReqRes = curlPut(curl, url,
-        "{                                                                                       "
-        "    \"messages\": {                                                                     "
-        "        \"@pscho:matrix.org\": {                                                        "
-        "            \"KHTBDQUCSC\": {                                                           "
-        "                \"content\": {                                                          "
-        "                   \"action\": \"request\",                                             "
-        "                   \"body\": {                                                          "
-        "                       \"algorithm\": \"m.megolm.v1.aes-sha2\",                         "
-        "                       \"room_id\": \"!hzjWFevYHfPyGRVYDa:matrix.org\",                 "
-        "                       \"sender_key\": \"8aHti5ijZWhdCBnzHvA42ujwpKltcD4VyZVBBdsKaHA\", "
-        "                       \"session_id\": \"+cKoR984Nqp0zn0a/b5xVsvKThV1xCa8GTnGBHkpfg0\"  "
-        "                   },                                                                   "
-        "                   \"request_id\": \"abc\",                                             "
-        "                   \"requesting_device_id\": \"TJJJAWJCAM\"                             "
-        "                },                                                                      "
-        "                \"type\": \"m.room_key_request\"                                        "
-        "            }                                                                           "
-        "        }                                                                               "
-        "    }                                                                                   "
-        "}                                                                                       "
+    sendMsgRoomKeyRequest(
+        curl,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
     );
 
-    prettyPrint(roomKeyReqRes.str, roomKeyReqRes.size);
-    curlStringDelete(&roomKeyReqRes);
     }
 
 
@@ -885,9 +929,38 @@ int main() {
         curlStringDelete(&str);
     }
 
+    while (1) {
+        getLine(msg, 1000);
+
+        if (command(msg, "quit"))
+            break;
+        if (command(msg, "upload device keys"))
+            uploadKeys(curl, olmAcc, (const char *)getDeviceKeys(olmAcc), NULL, NULL);
+        if (command(msg, "upload onetime keys"))
+            uploadKeys(curl, olmAcc, NULL, (const char *)getOnetimeKeys(olmAcc), NULL);
+        if (command(msg, "generate onetime keys")) {
+            int n = promptInt("how many?");
+            generateOnetimeKeys(olmAcc, n);
+        }
+        if (command(msg, "list device keys")) {
+            char *keys = (char *)getDeviceKeys(olmAcc);
+            prettyPrint(keys, strlen(keys));
+        }
+        if (command(msg, "list onetime keys")) {
+            char *keys = (char *)getOnetimeKeys(olmAcc);
+            prettyPrint(keys, strlen(keys));
+        }
+        if (command(msg, "save olmacc")) {
+            char filename[TMP_LEN], key[TMP_LEN];
+            promptStr("filename", filename);
+            promptStr("key", key);
+            printf("savig to %s using %s as key\n", filename, key);
+            //saveOlmAccount(olmAcc, filename, key, strlen(key));
+        }
+    }
+
     puts("done");
 
-    // save_olm_account(olmAcc, "olmacc.dat", "abcde", 5);
     free((void *)olmAcc);
 
     curl_easy_cleanup(curl);
