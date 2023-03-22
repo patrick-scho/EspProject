@@ -790,6 +790,102 @@ sendMsg(CURL *curl, const char *roomId, const char *msg) {
     return res;
 }
 
+size_t
+initInboundGroupSession(OlmInboundGroupSession *session, uint8_t *sessionKey, size_t sessionKeyLen)
+{
+    size_t result =
+        olm_init_inbound_group_session(
+            session,
+            sessionKey,
+            sessionKeyLen);
+            
+    return result;
+}
+
+bool
+initOutboundGroupSession(OlmOutboundGroupSession *session)
+{
+    size_t outboundGroupSessRandomLen = olm_init_outbound_group_session_random_length(session);
+    uint8_t *outboundGroupSessRandom = (uint8_t *)randomBytes(outboundGroupSessRandomLen);
+    sizet_t res =
+        olm_init_outbound_group_session(session, outboundGroupSessRandom, outboundGroupSessRandomLen);
+    return res;
+}
+
+bool
+loadOutboundGroupSession(OlmOutboundGroupSession *session, const char *filename, const char *key)
+{
+    FILE *f = fopen(filename, "rb");
+    fseek(f, 0, SEEK_END);
+    long filesize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buffer = (char *)malloc(filesize);
+    fwrite(buffer, 1, filesize, f);
+    fclose(f);
+    olm_unpickle_outbound_group_session(session, key, strlen(key), buffer, filesize);
+    free(buffer);
+}
+
+bool
+saveOutboundGroupSession(OlmOutboundGroupSession *session, const char *filename, const char *key)
+{
+    size_t olmSessionBufferLength = olm_pickle_outbound_group_session_length(session);
+    void *olmSessionBuffer = malloc(olmSessionBufferLength);
+    olm_pickle_outbound_group_session(session, key, strlen(key), olmSessionBuffer, olmSessionBufferLength);
+    FILE *f = fopen(filename, "wb");
+    fwrite(olmSessionBuffer, 1, olmSessionBufferLength, f);
+    fclose(f);
+}
+
+size_t
+decryptGroup(
+    OlmInboundGroupSession *session,
+    uint8_t *plaintext, size_t plaintextLen,
+    uint8_t *buffer, size_t bufferLen)
+{
+    uint32_t messageIndex = 0;
+
+    size_t res = olm_group_decrypt(
+        session,
+        plaintext, plaintextLen,
+        buffer, bufferLen,
+        &messageIndex);
+    
+    return res;
+}
+
+void
+sendGroupMsg(
+    OlmOutboundGroupSession *session, const char *roomId, const char *msg)
+{
+    char messageEvent[TMP_LEN];
+    mjson_snprintf(messageEvent, TMP_LEN,
+        "{"
+            "\"type\":\"m.room.message\","
+            "\"content\":{\"body\":\"%s\",\"msgtype\":\"m.text\"},"
+            "\"room_id\":\"%s\""
+        "}",
+        msg, roomId);
+    
+    char message[TMP_LEN];
+    size_t messageLen =
+        olm_group_encrypt(session,
+            (uint8_t *)messageEvent, strlen(messageEvent),
+            (uint8_t *)message, TMP_LEN);
+    char sessionId[TMP_LEN];
+    size_t sessionIdLen =
+        olm_outbound_group_session_id(session, sessionId, TMP_LEN);
+    char *encryptedMessage =
+        createEncryptedMegolmEvent(
+            message, messageLen,
+            dId, dKey, sessionId, sessionIdLen);
+
+    char url[TMP_LEN];
+    sprintf(url, "https://matrix.org/_matrix/client/r0/rooms/%s/send/m.room.encrypted/%d",
+        roomId, time(NULL));
+    curlPut(curl, url, encryptedMessage);
+}
+
 void test_verify(OlmAccount *olmAcc) {
     const char *deviceKeyStr =
     "{"
@@ -1188,46 +1284,40 @@ int main() {
             prettyPrint(str.str, str.size);
             curlStringDelete(&str);
         }
-        if (command(msg, "test")) {
+        if (command(msg, "in group session")) {
             char sessionKey[TMP_LEN];
             promptStr("Session Key", sessionKey);
             
-            OlmInboundGroupSession *inGroupSession =
-                olm_inbound_group_session(malloc(olm_inbound_group_session_size()));
-            if (olm_init_inbound_group_session(
-                    inGroupSession,
-                    (uint8_t *)sessionKey,
-                    strlen(sessionKey)) != olm_error())
-            {
-                char message[TMP_LEN];
-                promptStr("toDecrypt", message);
+            olm_init_inbound_group_session(
+                inGroupSession,
+                (uint8_t *)sessionKey,
+                strlen(sessionKey));
+        }
+        if (command(msg, "group decrypt")) {
+            char message[TMP_LEN];
+            promptStr("toDecrypt", message);
 
-                char buffer[TMP_LEN];
-                uint32_t messageIndex = 0;
+            char buffer[TMP_LEN];
+            uint32_t messageIndex = 0;
 
-                size_t res = olm_group_decrypt(
-                    inGroupSession,
-                    (uint8_t *)message, strlen(message),
-                    (uint8_t *)buffer, TMP_LEN, &messageIndex);
-                if (res == olm_error()) {
-                    printf("Error: %s\n",
-                        olm_inbound_group_session_last_error(inGroupSession));
-                }
-                else {
-                    size_t bufferLen = res;
-                    printf("%.*s\nmessageIndex: %d\n", bufferLen, buffer, messageIndex);
-                }
-                //olm_group_encrypt()
+            size_t res = olm_group_decrypt(
+                inGroupSession,
+                (uint8_t *)message, strlen(message),
+                (uint8_t *)buffer, TMP_LEN, &messageIndex);
+            if (res == olm_error()) {
+                printf("Error: %s\n",
+                    olm_inbound_group_session_last_error(inGroupSession));
+            }
+            else {
+                size_t bufferLen = res;
+                printf("%.*s\nmessageIndex: %d\n", bufferLen, buffer, messageIndex);
             }
         }
         if (command(msg, "create megolm")) {
             char roomId[TMP_LEN];
             promptStr("Room ID", roomId);
 
-            // create session
-            size_t outboundGroupSessRandomLen = olm_init_outbound_group_session_random_length(outboundGroupSess);
-            uint8_t *outboundGroupSessRandom = (uint8_t *)randomBytes(outboundGroupSessRandomLen);
-            olm_init_outbound_group_session(outboundGroupSess, outboundGroupSessRandom, outboundGroupSessRandomLen);
+            initOutboundGroupSession(outboundGroupSess);
 
             // get session id and key
             size_t idLen = olm_outbound_group_session_id_length(outboundGroupSess);
@@ -1237,22 +1327,24 @@ int main() {
             uint8_t *key = (uint8_t *)malloc(keyLen);
             olm_outbound_group_session_key(outboundGroupSess, key, keyLen);
 
-            size_t pickleBufferLen = olm_pickle_outbound_group_session_length(outboundGroupSess);
-            void *pickleBuffer = malloc(pickleBufferLen);
-            olm_pickle_outbound_group_session(outboundGroupSess, "abcde", 5, pickleBuffer, pickleBufferLen);
-            printf("key: %.*s id: %.*s\n", keyLen, key, idLen, id);
-            printf("pickle: %.*s\n", pickleBufferLen, pickleBuffer);
-
             // create inbound session
             olm_init_inbound_group_session(inboundGroupSession, key, keyLen);
         }
+        if (command(msg, "save megolm")) {
+            char filename[TMP_LEN];
+            char key[TMP_LEN];
+            promptStr("filename", filename);
+            promptStr("key", key);
+
+            saveOutboundGroupSession(outboundGroupSess, filename, key);
+        }
         if (command(msg, "load megolm")) {
-            char pickled[TMP_LEN];
-            promptStr("Pickled", pickled);
-            olm_unpickle_outbound_group_session(
-                outboundGroupSess,
-                "abcde", 5,
-                pickled, strlen(pickled));
+            char filename[TMP_LEN];
+            char key[TMP_LEN];
+            promptStr("filename", filename);
+            promptStr("key", key);
+
+            loadOutboundGroupSession(outboundGroupSess, filename, key);
                 
             // get session id and key
             size_t idLen = olm_outbound_group_session_id_length(outboundGroupSess);
@@ -1328,34 +1420,11 @@ int main() {
         }
         if (command(msg, "send megolm")) {
             char roomId[TMP_LEN];
-            char sessionId[TMP_LEN];
+            char msg[TMP_LEN];
             promptStr("roomId", roomId);
-            promptStr("sessionId", sessionId);
+            promptStr("msg", msg);
 
-            char messageEvent[TMP_LEN];
-            mjson_snprintf(messageEvent, TMP_LEN,
-                "{"
-                    "\"type\":\"m.room.message\","
-                    "\"content\":{\"body\":\"%s\",\"msgtype\":\"m.text\"},"
-                    "\"room_id\":\"%s\""
-                "}",
-                "Hallo", roomId);
-            
-            char message[TMP_LEN];
-            size_t messageLen =
-                olm_group_encrypt(outboundGroupSess,
-                    (uint8_t *)messageEvent, strlen(messageEvent),
-                    (uint8_t *)message, TMP_LEN);
-            char *encryptedMessage =
-                createEncryptedMegolmEvent(
-                    message, messageLen,
-                    dId, dKey, sessionId, strlen(sessionId));
-
-            printf("Message: %s\n", encryptedMessage);
-            char url[TMP_LEN];
-            sprintf(url, "https://matrix.org/_matrix/client/r0/rooms/%s/send/m.room.encrypted/%d",
-                roomId, time(NULL));
-            curlPut(curl, url, encryptedMessage);
+            sendGroupMsg(outboundGroupSess, roomId, msg);
         }
     }
 
