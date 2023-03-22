@@ -614,10 +614,10 @@ encrypt(OlmSession *olmSession, const char *body, char *buffer) {
 }
 
 char *
-createMsgEncrypted(const char *deviceKeyTo, const char *msg, size_t msgLen, const char *deviceIdFrom, const char *deviceKeyFrom) {
+createEncryptedOlmEvent(const char *deviceKeyTo, const char *msg, size_t msgLen, const char *deviceIdFrom, const char *deviceKeyFrom) {
     char *res = mjson_aprintf(
         "{"
-            "\"content\":{"
+        //     "\"content\":{"
                 "\"algorithm\":\"m.olm.v1.curve25519-aes-sha2\","
                 "\"ciphertext\":{"
                     "\"%s\":{"
@@ -627,12 +627,70 @@ createMsgEncrypted(const char *deviceKeyTo, const char *msg, size_t msgLen, cons
                 "},"
                 "\"device_id\":\"%s\","
                 "\"sender_key\":\"%s\""
-            "},"
-            "\"type\":\"m.room.encrypted\""
+        //     "},"
+        //     "\"type\":\"m.room.encrypted\""
         "}",
         deviceKeyTo, msgLen, msg, deviceIdFrom, deviceKeyFrom
     );
     return res;
+}
+
+char *
+createEncryptedMegolmEvent(const char *msg, size_t msgLen, const char *deviceIdFrom, const char *deviceKeyFrom, const char *sessionId, size_t sessionIdLen) {
+    char *res = mjson_aprintf(
+        "{"
+        //     "\"content\":{"
+                "\"algorithm\":\"m.megolm.v1.aes-sha2\","
+                "\"ciphertext\":\"%.*s\","
+                "\"device_id\":\"%s\","
+                "\"sender_key\":\"%s\","
+                "\"session_id\":\"%s\""
+            // "},"
+            // "\"type\":\"m.room.encrypted\""
+        "}",
+        msgLen, msg, deviceIdFrom, deviceKeyFrom, sessionId
+    );
+    return res;
+}
+
+void
+generateRoomKeyEvent(
+    char *buffer, size_t bufferLen,
+    const char *roomId, size_t roomIdLen,
+    const char *sessionId, size_t sessionIdLen,
+    const char *sessionKey, size_t sessionKeyLen)
+{
+    mjson_snprintf(buffer, bufferLen,
+        "{"
+            "\"algorithm\":\"m.megolm.v1.aes-sha2\","
+            "\"room_id\":\"%.*s\","
+            "\"session_id\":\"%.*s\","
+            "\"session_key\":\"%.*s\""
+        "}",
+        // "{"
+        //     "\"sender\": \"@pscho:matrix.org\","
+        //     "\"sender_device\": \"ZGAUCOSULH\","
+        //     "\"keys\": {"
+        //         "\"ed25519\": \"7nEQZNvzWOzS1ykLN+xGblGWzeWr+QKIpJ0jd+H+y6A\""
+        //     "},"
+        //     "\"recipient\": \"@pscho:matrix.org\","
+        //     "\"recipient_keys\": {"
+        //         "\"ed25519\": \"5h4xgfwShdw/My3JhvPArp0pvKQLfKdSaMylyNQps1M\""
+        //     "},"
+        //     "\"type\": \"m.room_key\","
+        //     "\"content\": {"
+        //         "\"algorithm\": \"m.megolm.v1.aes-sha2\","
+        //         "\"room_id\": \"%.*s\","
+        //         "\"session_id\": \"%.*s\","
+        //         "\"session_key\": \"%.*s\","
+        //         "\"chain_index\": 0,"
+        //         "\"org.matrix.msc3061.shared_history\": true"
+        //     "}"
+        // "}",
+        roomIdLen, roomId,
+        sessionIdLen, sessionId,
+        sessionKeyLen, sessionKey
+    );
 }
 
 CurlStr
@@ -653,6 +711,42 @@ sendToDevice(CURL *curl, const char *userId, const char *deviceId, const char *m
     free(toDeviceMsg);
 
     return res;
+}
+
+CurlStr
+sendRoomKeyToDevice(
+    CURL *curl,
+    OlmSession *olmSess,
+    const char *userId,
+    const char *deviceIdTo,
+    const char *deviceKeyTo,
+    const char *deviceIdFrom,
+    const char *deviceKeyFrom,
+    const char *roomId, size_t roomIdLen,
+    const char *sessionId, size_t sessionIdLen,
+    const char *sessionKey, size_t sessionKeyLen)
+{
+    char eventBuffer[TMP_LEN];
+    generateRoomKeyEvent(eventBuffer, TMP_LEN,
+        roomId, roomIdLen,
+        sessionId, sessionIdLen,
+        sessionKey, sessionKeyLen);    
+
+    char buffer[TMP_LEN];
+    size_t bufferLen =
+        encrypt(olmSess, eventBuffer, buffer);
+
+    char *encryptedEvent =
+        createEncryptedOlmEvent(
+            deviceKeyTo,
+            buffer, bufferLen,
+            deviceIdFrom, deviceKeyFrom);
+    
+    printf("sending\n%s\nto %s\n", encryptedEvent, deviceIdTo);
+
+    return sendToDevice(curl,
+        userId, deviceIdTo, "m.room.encrypted",
+        encryptedEvent, strlen(encryptedEvent));
 }
 
 CurlStr
@@ -814,13 +908,10 @@ void promptStr(const char *str, char *buffer) {
 }
 
 /*
-- upload keys
-- claim key
-- verify
-- start session
-- dummy
-- key share request
-- decrypt
+16.03 nachricht senden
+17.03 auf esp
+18.03 device management
+19.03 als lib organisieren
 */
 
 int main() {
@@ -833,6 +924,11 @@ int main() {
     loadOlmAccount(olmAcc, "olmacc.dat", "abcde", 5);
 
     OlmSession *olmSess = olm_session(malloc(olm_session_size()));
+
+    OlmOutboundGroupSession *outboundGroupSess =
+        olm_outbound_group_session(malloc(olm_outbound_group_session_size()));
+    OlmInboundGroupSession *inboundGroupSession =
+        olm_inbound_group_session(malloc(olm_inbound_group_session_size()));
 
     char msg[TMP_LEN];
 
@@ -929,7 +1025,7 @@ int main() {
             size_t dummyMsgEncryptedLen =
                 encrypt(olmSess, dummyMsg, dummyMsgEncrypted);
             char *encryptedEvent =
-                createMsgEncrypted(deviceKeyTo, dummyMsgEncrypted, dummyMsgEncryptedLen, dId, dKey);
+                createEncryptedOlmEvent(deviceKeyTo, dummyMsgEncrypted, dummyMsgEncryptedLen, dId, dKey);
             printf("%s\n", encryptedEvent);
             CurlStr res =
                 sendToDevice(curl, uId, deviceIdTo, "m.encrypted", encryptedEvent, strlen(encryptedEvent));
@@ -1121,7 +1217,145 @@ int main() {
                     size_t bufferLen = res;
                     printf("%.*s\nmessageIndex: %d\n", bufferLen, buffer, messageIndex);
                 }
+                //olm_group_encrypt()
             }
+        }
+        if (command(msg, "create megolm")) {
+            char roomId[TMP_LEN];
+            promptStr("Room ID", roomId);
+
+            // create session
+            size_t outboundGroupSessRandomLen = olm_init_outbound_group_session_random_length(outboundGroupSess);
+            uint8_t *outboundGroupSessRandom = (uint8_t *)randomBytes(outboundGroupSessRandomLen);
+            olm_init_outbound_group_session(outboundGroupSess, outboundGroupSessRandom, outboundGroupSessRandomLen);
+
+            // get session id and key
+            size_t idLen = olm_outbound_group_session_id_length(outboundGroupSess);
+            uint8_t *id = (uint8_t *)malloc(idLen);
+            olm_outbound_group_session_id(outboundGroupSess, id, idLen);
+            size_t keyLen = olm_outbound_group_session_key_length(outboundGroupSess);
+            uint8_t *key = (uint8_t *)malloc(keyLen);
+            olm_outbound_group_session_key(outboundGroupSess, key, keyLen);
+
+            size_t pickleBufferLen = olm_pickle_outbound_group_session_length(outboundGroupSess);
+            void *pickleBuffer = malloc(pickleBufferLen);
+            olm_pickle_outbound_group_session(outboundGroupSess, "abcde", 5, pickleBuffer, pickleBufferLen);
+            printf("key: %.*s id: %.*s\n", keyLen, key, idLen, id);
+            printf("pickle: %.*s\n", pickleBufferLen, pickleBuffer);
+
+            // create inbound session
+            olm_init_inbound_group_session(inboundGroupSession, key, keyLen);
+        }
+        if (command(msg, "load megolm")) {
+            char pickled[TMP_LEN];
+            promptStr("Pickled", pickled);
+            olm_unpickle_outbound_group_session(
+                outboundGroupSess,
+                "abcde", 5,
+                pickled, strlen(pickled));
+                
+            // get session id and key
+            size_t idLen = olm_outbound_group_session_id_length(outboundGroupSess);
+            uint8_t *id = (uint8_t *)malloc(idLen);
+            olm_outbound_group_session_id(outboundGroupSess, id, idLen);
+            size_t keyLen = olm_outbound_group_session_key_length(outboundGroupSess);
+            uint8_t *key = (uint8_t *)malloc(keyLen);
+            olm_outbound_group_session_key(outboundGroupSess, key, keyLen);
+
+            printf("key: %.*s id: %.*s\n", keyLen, key, idLen, id);
+
+            // create inbound session
+            olm_init_inbound_group_session(inboundGroupSession, key, keyLen);
+        }
+        if (command(msg, "loop devices")) {
+            char roomId[TMP_LEN];
+            char sessionId[TMP_LEN];
+            char sessionKey[TMP_LEN];
+            promptStr("roomId", roomId);
+            promptStr("sessionId", sessionId);
+            promptStr("sessionKey", sessionKey);
+
+
+            CurlStr devicesRes = curlPost(curl, "https://matrix.org/_matrix/client/v3/keys/query", "{\"device_keys\":{\"@pscho:matrix.org\":[]}}");
+
+            const char *s; int sLen;
+            mjson_find(devicesRes.str, devicesRes.size, "$.device_keys.@pscho:matrix\\.org", &s, &sLen);
+            int kOff, kLen, vOff, vLen, vType, off;
+            for (off = 0; (off = mjson_next(s, sLen, off, &kOff, &kLen,
+                          &vOff, &vLen, &vType)) != 0; ) {
+                const char *kStr = s + kOff;
+                const char *vStr = s + vOff;
+                char deviceId[TMP_LEN];
+                int deviceIdLen =
+                    mjson_get_string(vStr, vLen, "$.device_id", deviceId, TMP_LEN);
+                char searchTerm[TMP_LEN];
+                sprintf(searchTerm, "$.keys.curve25519:%.*s", deviceIdLen, deviceId);
+                char deviceKey[TMP_LEN];
+                int deviceKeyLen =
+                    mjson_get_string(vStr, vLen, searchTerm, deviceKey, TMP_LEN);
+
+                printf("device key: %.*s\tdevice id: %.*s\n", deviceIdLen, deviceId, deviceKeyLen, deviceKey);
+                sendRoomKeyToDevice(curl, olmSess,
+                    "@pscho:matrix.org",
+                    deviceId, deviceKey, dId, dKey,
+                    roomId, strlen(roomId),
+                    sessionId, strlen(sessionId),
+                    sessionKey, strlen(sessionKey));
+            }
+            curlStringDelete(&devicesRes);
+        }
+        if (command(msg, "send room key")) {
+            char deviceId[TMP_LEN];
+            char deviceKey[TMP_LEN];
+            char roomId[TMP_LEN];
+            char sessionId[TMP_LEN];
+            char sessionKey[TMP_LEN];
+            promptStr("deviceId", deviceId);
+            promptStr("deviceKey", deviceKey);
+            promptStr("roomId", roomId);
+            promptStr("sessionId", sessionId);
+            promptStr("sessionKey", sessionKey);
+
+            CurlStr sendRes =
+                sendRoomKeyToDevice(curl, olmSess,
+                    "@pscho:matrix.org",
+                    deviceId, deviceKey, dId, dKey,
+                    roomId, strlen(roomId),
+                    (char *)sessionId, strlen(sessionId),
+                    (char *)sessionKey, strlen(sessionKey));
+            prettyPrint(sendRes.str, sendRes.size);
+            curlStringDelete(&sendRes);
+        }
+        if (command(msg, "send megolm")) {
+            char roomId[TMP_LEN];
+            char sessionId[TMP_LEN];
+            promptStr("roomId", roomId);
+            promptStr("sessionId", sessionId);
+
+            char messageEvent[TMP_LEN];
+            mjson_snprintf(messageEvent, TMP_LEN,
+                "{"
+                    "\"type\":\"m.room.message\","
+                    "\"content\":{\"body\":\"%s\",\"msgtype\":\"m.text\"},"
+                    "\"room_id\":\"%s\""
+                "}",
+                "Hallo", roomId);
+            
+            char message[TMP_LEN];
+            size_t messageLen =
+                olm_group_encrypt(outboundGroupSess,
+                    (uint8_t *)messageEvent, strlen(messageEvent),
+                    (uint8_t *)message, TMP_LEN);
+            char *encryptedMessage =
+                createEncryptedMegolmEvent(
+                    message, messageLen,
+                    dId, dKey, sessionId, strlen(sessionId));
+
+            printf("Message: %s\n", encryptedMessage);
+            char url[TMP_LEN];
+            sprintf(url, "https://matrix.org/_matrix/client/r0/rooms/%s/send/m.room.encrypted/%d",
+                roomId, time(NULL));
+            curlPut(curl, url, encryptedMessage);
         }
     }
 
