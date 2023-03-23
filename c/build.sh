@@ -7,6 +7,7 @@ fi
 INCLUDES=(
     "-I ext/mjson/src"
     "-I ext/olm/include"
+    "-I /mingw64/include/curl"
 )
 
 LIBPATHS=(

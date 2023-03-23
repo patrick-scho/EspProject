@@ -4,7 +4,8 @@
 #include <string.h>
 #include <time.h>
 
-#include <curl/curl.h>
+//#include <curl/curl.h>
+#include <curl.h>
 
 #include <mjson.h>
 
@@ -807,12 +808,12 @@ initOutboundGroupSession(OlmOutboundGroupSession *session)
 {
     size_t outboundGroupSessRandomLen = olm_init_outbound_group_session_random_length(session);
     uint8_t *outboundGroupSessRandom = (uint8_t *)randomBytes(outboundGroupSessRandomLen);
-    sizet_t res =
+    size_t res =
         olm_init_outbound_group_session(session, outboundGroupSessRandom, outboundGroupSessRandomLen);
     return res;
 }
 
-bool
+void
 loadOutboundGroupSession(OlmOutboundGroupSession *session, const char *filename, const char *key)
 {
     FILE *f = fopen(filename, "rb");
@@ -826,7 +827,7 @@ loadOutboundGroupSession(OlmOutboundGroupSession *session, const char *filename,
     free(buffer);
 }
 
-bool
+void
 saveOutboundGroupSession(OlmOutboundGroupSession *session, const char *filename, const char *key)
 {
     size_t olmSessionBufferLength = olm_pickle_outbound_group_session_length(session);
@@ -856,7 +857,10 @@ decryptGroup(
 
 void
 sendGroupMsg(
-    OlmOutboundGroupSession *session, const char *roomId, const char *msg)
+    CURL *curl,
+    OlmOutboundGroupSession *session,
+    const char *roomId,
+    const char *msg)
 {
     char messageEvent[TMP_LEN];
     mjson_snprintf(messageEvent, TMP_LEN,
@@ -874,7 +878,9 @@ sendGroupMsg(
             (uint8_t *)message, TMP_LEN);
     char sessionId[TMP_LEN];
     size_t sessionIdLen =
-        olm_outbound_group_session_id(session, sessionId, TMP_LEN);
+        olm_outbound_group_session_id(
+            session,
+            (uint8_t *)sessionId, TMP_LEN);
     char *encryptedMessage =
         createEncryptedMegolmEvent(
             message, messageLen,
@@ -1289,7 +1295,7 @@ int main() {
             promptStr("Session Key", sessionKey);
             
             olm_init_inbound_group_session(
-                inGroupSession,
+                inboundGroupSession,
                 (uint8_t *)sessionKey,
                 strlen(sessionKey));
         }
@@ -1301,12 +1307,12 @@ int main() {
             uint32_t messageIndex = 0;
 
             size_t res = olm_group_decrypt(
-                inGroupSession,
+                inboundGroupSession,
                 (uint8_t *)message, strlen(message),
                 (uint8_t *)buffer, TMP_LEN, &messageIndex);
             if (res == olm_error()) {
                 printf("Error: %s\n",
-                    olm_inbound_group_session_last_error(inGroupSession));
+                    olm_inbound_group_session_last_error(inboundGroupSession));
             }
             else {
                 size_t bufferLen = res;
@@ -1347,17 +1353,17 @@ int main() {
             loadOutboundGroupSession(outboundGroupSess, filename, key);
                 
             // get session id and key
-            size_t idLen = olm_outbound_group_session_id_length(outboundGroupSess);
-            uint8_t *id = (uint8_t *)malloc(idLen);
-            olm_outbound_group_session_id(outboundGroupSess, id, idLen);
-            size_t keyLen = olm_outbound_group_session_key_length(outboundGroupSess);
-            uint8_t *key = (uint8_t *)malloc(keyLen);
-            olm_outbound_group_session_key(outboundGroupSess, key, keyLen);
+            size_t sessionIdLen = olm_outbound_group_session_id_length(outboundGroupSess);
+            uint8_t *sessionId = (uint8_t *)malloc(sessionIdLen);
+            olm_outbound_group_session_id(outboundGroupSess, sessionId, sessionIdLen);
+            size_t sessionKeyLen = olm_outbound_group_session_key_length(outboundGroupSess);
+            uint8_t *sessionKey = (uint8_t *)malloc(sessionKeyLen);
+            olm_outbound_group_session_key(outboundGroupSess, sessionKey, sessionKeyLen);
 
-            printf("key: %.*s id: %.*s\n", keyLen, key, idLen, id);
+            printf("key: %.*s id: %.*s\n", sessionKeyLen, sessionKey, sessionIdLen, sessionId);
 
             // create inbound session
-            olm_init_inbound_group_session(inboundGroupSession, key, keyLen);
+            olm_init_inbound_group_session(inboundGroupSession, sessionKey, sessionKeyLen);
         }
         if (command(msg, "loop devices")) {
             char roomId[TMP_LEN];
@@ -1424,7 +1430,7 @@ int main() {
             promptStr("roomId", roomId);
             promptStr("msg", msg);
 
-            sendGroupMsg(outboundGroupSess, roomId, msg);
+            sendGroupMsg(curl, outboundGroupSess, roomId, msg);
         }
     }
 
