@@ -28,7 +28,7 @@ if [[ "$*" == *"-o"* ]]; then
 fi
 
 #clang -fuse-ld=lld.exe -g -gcodeview -Wl,/debug,/pdb:out/main.pdb -o out/main.exe main.c ${INCLUDES[*]} ${LIBPATHS[*]} ${LIBS[*]} ${OBJS[*]}
-g++ -g -o out/main.exe main.c ${INCLUDES[*]} ${LIBPATHS[*]} ${LIBS[*]} ${OBJS[*]}
+g++ -g -o out/main.exe src/main.c ${INCLUDES[*]} ${LIBPATHS[*]} ${LIBS[*]} ${OBJS[*]}
 
 
 if [[ "$*" == *"-run"* ]]; then
