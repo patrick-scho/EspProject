@@ -1,3 +1,6 @@
+#ifndef HTTPCURL__H
+#define HTTPCURL__H
+
 #include <curl.h>
 
 
@@ -182,3 +185,6 @@ curlGet(CURL *curl, const char *url) {
 
     return result;
 }
+
+#endif
+
