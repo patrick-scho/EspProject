@@ -1,12 +1,11 @@
 #ifndef MATRIX__H
 #define MATRIX__H
 
+#include <time.h>
 #include <stdio.h>
 
 #include <mjson.h>
 #include <olm/olm.h>
-
-#include "httpCurl.h"
 
 
 #define KEY_LEN 100 // 43
