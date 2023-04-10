@@ -2,10 +2,12 @@
 #define MATRIX__H
 
 #include <time.h>
-#include <stdio.h>
+//#include <stdio.h>
 
 #include <mjson.h>
 #include <olm/olm.h>
+
+#include "httpStruct.h"
 
 
 #define KEY_LEN 100 // 43
@@ -21,11 +23,27 @@ const char *dKey = "5KjCB+kjNlRJhTFxxdfUcr/erraW08V0uZOEe7UYHTM";
 // utility
 //--------
 
-void checkError(size_t res, OlmAccount *olmAcc) {
+void checkAccountError(OlmAccount *olmAcc, size_t res) {
     if (res == olm_error()) {
         printf("An error occured: [%d] %s\n",
             olm_account_last_error_code(olmAcc),
             olm_account_last_error(olmAcc));
+    }
+}
+
+void checkSessionError(OlmSession *olmSess, size_t res) {
+    if (res == olm_error()) {
+        printf("An error occured: [%d] %s\n",
+            olm_session_last_error_code(olmSess),
+            olm_session_last_error(olmSess));
+    }
+}
+
+void checkOutboundSessionError(OlmOutboundGroupSession *olmOutboundSess, size_t res) {
+    if (res == olm_error()) {
+        printf("An error occured: [%d] %s\n",
+            olm_outbound_group_session_last_error_code(olmOutboundSess),
+            olm_outbound_group_session_last_error(olmOutboundSess));
     }
 }
 
@@ -37,11 +55,41 @@ randomBytes(size_t len) {
     return random;
 }
 
-void prettyPrint(const char *s, size_t n) {
+void prettyPrint(Str str) {
     char *printBuf = NULL;
-    mjson_pretty(s, n, "  ", mjson_print_dynamic_buf, &printBuf);
+    mjson_pretty(str.str, str.len, "  ", mjson_print_dynamic_buf, &printBuf);
     printf("%s\n", printBuf);
     free(printBuf);
+}
+
+bool
+loadFile(const char *filename, void **buffer, size_t *bufferLen)
+{
+    FILE *f = fopen(filename, "rb");
+    fseek(f, 0, SEEK_END);
+    *bufferLen = ftell(f);
+    fseek(f, 0, SEEK_CUR);
+
+    *buffer = malloc(*bufferLen);
+    size_t read =
+        fread(*buffer, 1, *bufferLen, f);
+
+    fclose(f);
+
+    return read == *bufferLen;
+}
+
+bool
+saveFile(const char *filename, void *buffer, size_t bufferLen)
+{
+    FILE *f = fopen(filename, "wb");
+
+    size_t written =
+        fwrite(buffer, 1, bufferLen, f);
+
+    fclose(f);
+
+    return written == bufferLen;
 }
 
 // olm
@@ -58,48 +106,29 @@ createOlmAccount() {
     size_t res = olm_create_account(olmAcc, randomBuffer, randomLen);
     free(randomBuffer);
 
-    checkError(res, olmAcc);
+    checkAccountError(olmAcc, res);
 
     return olmAcc;
 }
 
-void
-saveOlmAccount(OlmAccount *olmAcc, const char *filename, const void *key, size_t key_length) {
-    size_t buffer_size = olm_pickle_account_length(olmAcc);
-    void *buffer = malloc(buffer_size);
-    size_t pickled_length =
-        olm_pickle_account(olmAcc, key, key_length, buffer, buffer_size);
+size_t
+saveOlmAccount(OlmAccount *olmAcc, void **buffer, size_t *bufferLen, const void *key, size_t keyLen) {
+    *bufferLen = olm_pickle_account_length(olmAcc);
+    *buffer = malloc(*bufferLen);
+    size_t pickledLen =
+        olm_pickle_account(olmAcc, key, keyLen, *buffer, *bufferLen);
 
-    FILE *f = fopen(filename, "wb");
-    size_t written =
-        fwrite(buffer, 1, pickled_length, f);
-    if (written != pickled_length)
-        printf("Error, only wrote %d out of %d bytes\n", written, pickled_length);
-    fclose(f);
-    free(buffer);
+    checkAccountError(olmAcc, pickledLen);
+
+    return pickledLen;
 }
 
 void
-loadOlmAccount(OlmAccount *olmAcc, const char *filename, const void *key, size_t key_length) {
-    FILE *f = fopen(filename, "rb");
-    fseek(f, 0, SEEK_END);
-    size_t buffer_size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    void *buffer = malloc(buffer_size);
-
-    size_t read = fread(buffer, 1, buffer_size, f);
-    fclose(f);
-
-    if (read != buffer_size)
-        printf("Error, only read %d out of %d bytes\n", read, buffer_size);
-
+loadOlmAccount(OlmAccount *olmAcc, void *buffer, size_t bufferLen, const void *key, size_t keyLen) {
     size_t res =
-        olm_unpickle_account(olmAcc, key, key_length, buffer, read);
+        olm_unpickle_account(olmAcc, key, keyLen, buffer, bufferLen);
 
-    checkError(res, olmAcc);
-
-    free(buffer);
+    checkAccountError(olmAcc, res);
 }
 
 void *
@@ -109,7 +138,7 @@ getDeviceKeys(OlmAccount *olmAcc) {
     void *deviceKeysBuffer = malloc(deviceKeyLen); // free on callsite
     size_t res = olm_account_identity_keys(olmAcc, deviceKeysBuffer, deviceKeyLen);
     
-    checkError(res, olmAcc);
+    checkAccountError(olmAcc, res);
 
     return deviceKeysBuffer;
 }
@@ -122,7 +151,7 @@ generateOnetimeKeys(OlmAccount *olmAcc, size_t nKeys) {
     size_t res = olm_account_generate_one_time_keys(olmAcc, nKeys, randomBuffer, randomLen);
     free(randomBuffer);
 
-    checkError(res, olmAcc);
+    checkAccountError(olmAcc, res);
 }
 
 void *
@@ -132,7 +161,7 @@ getOnetimeKeys(OlmAccount *olmAcc) {
     
     size_t res = olm_account_one_time_keys(olmAcc, onetimeKeys, onetimeKeysLen);
 
-    checkError(res, olmAcc);
+    checkAccountError(olmAcc, res);
 
     return onetimeKeys;
 }
@@ -143,7 +172,7 @@ signJson(OlmAccount *olmAcc, char *s, int n, const char *str) {
     char sig[SIG_LEN]; // TODO: call olm_account_signature_length
     const char *sigKeyId = dId; // TODO: select correct signature key
     size_t res = olm_account_sign(olmAcc, str, strlen(str), sig, SIG_LEN);
-    checkError(res, olmAcc);
+    checkAccountError(olmAcc, res);
 
     char signatureStr[TMP_LEN];
     mjson_snprintf(signatureStr, TMP_LEN,
@@ -237,7 +266,7 @@ void getOnetimeKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *one
 
 // upload keys to server
 // only non-null keys are uploaded
-void uploadKeys(CURL *curl, OlmAccount *olmAcc, const char *deviceKeys, const char *fallbackKeys, const char *onetimeKeys) {
+void uploadKeys(HttpCallbacks *http, OlmAccount *olmAcc, const char *deviceKeys, const char *fallbackKeys, const char *onetimeKeys) {
     char msg[TMP_LEN] = "{ ";
 
     if (deviceKeys != NULL) {
@@ -268,15 +297,15 @@ void uploadKeys(CURL *curl, OlmAccount *olmAcc, const char *deviceKeys, const ch
     mjson_snprintf(msg+strlen(msg)-1, TMP_LEN-strlen(msg)+1,
         "}");
 
-    prettyPrint(msg, strlen(msg));
+    prettyPrint(strInitFromLen(msg, strlen(msg)));
 
-    CurlStr res = curlPost(curl, "https://matrix.org/_matrix/client/r0/keys/upload", msg);
-    prettyPrint(res.str, res.size);
-    curlStringDelete(&res);
+    Str res = http->post(http->data, "https://matrix.org/_matrix/client/r0/keys/upload", strInitFromLen(msg, strlen(msg)));
+    prettyPrint(res);
+    strFree(&res);
 }
 
-CurlStr
-login(CURL *curl, const char *userId, const char *password, const char *deviceDisplayName) {
+Str
+login(HttpCallbacks *http, const char *userId, const char *password, const char *deviceDisplayName) {
     char msg[TMP_LEN];
     mjson_snprintf(msg, TMP_LEN,
             "{"
@@ -290,15 +319,15 @@ login(CURL *curl, const char *userId, const char *password, const char *deviceDi
             "}",
             userId, password, deviceDisplayName
     );
-    CurlStr loginRes =
-        curlPost(curl, "https://matrix.org/_matrix/client/v3/login", msg);
+    Str loginRes =
+        http->post(http->data, "https://matrix.org/_matrix/client/v3/login", strInitFromLen(msg, strlen(msg)));
 
     return loginRes;
 }
 
 // claim a onetime key for the specified device
-CurlStr
-claimOnetimeKey(CURL *curl, const char *theirDeviceId) {
+Str
+claimOnetimeKey(HttpCallbacks *http, const char *theirDeviceId) {
     char msg[TMP_LEN];
     mjson_snprintf(msg, TMP_LEN,
         "{"
@@ -309,9 +338,9 @@ claimOnetimeKey(CURL *curl, const char *theirDeviceId) {
             "},"
             "\"timeout\":10000"
         "}", theirDeviceId);
-    CurlStr res =
-        curlPost(curl, "https://matrix.org/_matrix/client/v3/keys/claim",
-            msg);
+    Str res =
+        http->post(http->data, "https://matrix.org/_matrix/client/v3/keys/claim",
+            strInitFromLen(msg, strlen(msg)));
     return res;
 }
 
@@ -328,27 +357,23 @@ createOlmSession(OlmSession *olmSession, OlmAccount *olmAcc, const char *theirDe
             olm_create_outbound_session_random_length(olmSession));
 }
 
-void
-loadOlmSession(OlmSession *olmSession, const char *filename, const char *key) {
-    FILE *f = fopen(filename, "rb");
-    fseek(f, 0, SEEK_END);
-    long filesize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *buffer = (char *)malloc(filesize);
-    fwrite(buffer, 1, filesize, f);
-    fclose(f);
-    olm_unpickle_session(olmSession, key, strlen(key), buffer, filesize);
-    free(buffer);
+size_t
+saveOlmSession(OlmSession *olmSession, void **buffer, size_t *bufferLen, const char *key, size_t keyLen) {
+    size_t olmSessionBufferLength = olm_pickle_session_length(olmSession);
+    *buffer = malloc(olmSessionBufferLength);
+    *bufferLen =
+        olm_pickle_session(olmSession, key, keyLen, *buffer, olmSessionBufferLength);
+
+    checkSessionError(olmSession, *bufferLen);
+
+    return *bufferLen;
 }
 
 void
-saveOlmSession(OlmSession *olmSession, const char *filename, const char *key) {
-    size_t olmSessionBufferLength = olm_pickle_session_length(olmSession);
-    void *olmSessionBuffer = malloc(olmSessionBufferLength);
-    olm_pickle_session(olmSession, key, strlen(key), olmSessionBuffer, olmSessionBufferLength);
-    FILE *f = fopen(filename, "wb");
-    fwrite(olmSessionBuffer, 1, olmSessionBufferLength, f);
-    fclose(f);
+loadOlmSession(OlmSession *olmSession, void *buffer, size_t bufferLen, const char *key, size_t keyLen) {
+    size_t result =
+        olm_unpickle_session(olmSession, key, keyLen, buffer, bufferLen);
+    checkSessionError(olmSession, result);
 }
 
 // check if a message was encrypted using this OlmSession
@@ -465,9 +490,9 @@ createEncryptedMegolmEvent(const char *msg, size_t msgLen, const char *deviceIdF
                 "\"ciphertext\":\"%.*s\","
                 "\"device_id\":\"%s\","
                 "\"sender_key\":\"%s\","
-                "\"session_id\":\"%s\""
+                "\"session_id\":\"%.*s\""
         "}",
-        msgLen, msg, deviceIdFrom, deviceKeyFrom, sessionId
+        msgLen, msg, deviceIdFrom, deviceKeyFrom, sessionIdLen, sessionId
     );
     return res;
 }
@@ -514,8 +539,8 @@ generateRoomKeyEvent(
 }
 
 // send an event as to-device message
-CurlStr
-sendToDevice(CURL *curl, const char *userId, const char *deviceId, const char *msgType, const char *msg, size_t msgLen) {
+Str
+sendToDevice(HttpCallbacks *http, const char *userId, const char *deviceId, const char *msgType, const char *msg, size_t msgLen) {
     char url[TMP_LEN];
     sprintf(url, "https://matrix.org/_matrix/client/v3/sendToDevice/%s/%d", msgType, time(NULL));
     char *toDeviceMsg = mjson_aprintf(
@@ -528,15 +553,15 @@ sendToDevice(CURL *curl, const char *userId, const char *deviceId, const char *m
          "}",
         userId, deviceId, msgLen, msg);
 
-    CurlStr res = curlPut(curl, url, toDeviceMsg);
+    Str res = http->put(http->data, url, strInitFromLen(toDeviceMsg, strlen(toDeviceMsg)));
     free(toDeviceMsg);
 
     return res;
 }
 
-CurlStr
+Str
 sendRoomKeyToDevice(
-    CURL *curl,
+    HttpCallbacks *http,
     OlmSession *olmSess,
     const char *userId,
     const char *deviceIdTo,
@@ -565,15 +590,15 @@ sendRoomKeyToDevice(
     
     printf("sending\n%s\nto %s\n", encryptedEvent, deviceIdTo);
 
-    return sendToDevice(curl,
+    return sendToDevice(http,
         userId, deviceIdTo, "m.room.encrypted",
         encryptedEvent, strlen(encryptedEvent));
 }
 
 // send a m.room_key_request
-CurlStr
+Str
 sendMsgRoomKeyRequest(
-    CURL *curl,
+    HttpCallbacks *http,
     const char *userId,
     const char *deviceIdTo,
     const char *deviceIdFrom,
@@ -597,19 +622,19 @@ sendMsgRoomKeyRequest(
             "\"type\": \"m.room_key_request\""
         "}",
         roomId, deviceKeyFrom, sessionId, requestId, deviceIdFrom);
-    return sendToDevice(curl, userId, deviceIdTo, "m.room_key_request", msg, strlen(msg));
+    return sendToDevice(http, userId, deviceIdTo, "m.room_key_request", msg, strlen(msg));
 }
 
 // send a test message to a room
-CurlStr
-sendMsg(CURL *curl, const char *roomId, const char *msg) {
+Str
+sendMsg(HttpCallbacks *http, const char *roomId, const char *msg) {
     char url[TMP_LEN];
     sprintf(url, "https://matrix.org/_matrix/client/r0/rooms/%s/send/m.room.message/%d", roomId, time(NULL));
 
     char body[TMP_LEN];
     sprintf(body, "{\"body\":\"%s\",\"msgtype\":\"m.text\"}", msg);
 
-    CurlStr res = curlPut(curl, url, body);
+    Str res = http->put(http->data, url, strInitFromLen(body, strlen(body)));
     return res;
 }
 
@@ -637,29 +662,26 @@ initOutboundGroupSession(OlmOutboundGroupSession *session)
     return res;
 }
 
-void
-loadOutboundGroupSession(OlmOutboundGroupSession *session, const char *filename, const char *key)
+size_t
+saveOutboundGroupSession(OlmOutboundGroupSession *session, void **buffer, size_t *bufferLen, const char *key, size_t keyLen)
 {
-    FILE *f = fopen(filename, "rb");
-    fseek(f, 0, SEEK_END);
-    long filesize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *buffer = (char *)malloc(filesize);
-    fwrite(buffer, 1, filesize, f);
-    fclose(f);
-    olm_unpickle_outbound_group_session(session, key, strlen(key), buffer, filesize);
-    free(buffer);
+    size_t olmSessionBufferLength = olm_pickle_outbound_group_session_length(session);
+    *buffer = malloc(olmSessionBufferLength);
+    *bufferLen =
+        olm_pickle_outbound_group_session(session, key, keyLen, *buffer, olmSessionBufferLength);
+
+    checkOutboundSessionError(session, *bufferLen);
+
+    return *bufferLen;
 }
 
 void
-saveOutboundGroupSession(OlmOutboundGroupSession *session, const char *filename, const char *key)
+loadOutboundGroupSession(OlmOutboundGroupSession *session, void *buffer, size_t bufferLen, const char *key, size_t keyLen)
 {
-    size_t olmSessionBufferLength = olm_pickle_outbound_group_session_length(session);
-    void *olmSessionBuffer = malloc(olmSessionBufferLength);
-    olm_pickle_outbound_group_session(session, key, strlen(key), olmSessionBuffer, olmSessionBufferLength);
-    FILE *f = fopen(filename, "wb");
-    fwrite(olmSessionBuffer, 1, olmSessionBufferLength, f);
-    fclose(f);
+    size_t result =
+        olm_unpickle_outbound_group_session(session, key, keyLen, buffer, bufferLen);
+    
+    checkOutboundSessionError(session, result);
 }
 
 // decrypt a received room message
@@ -680,15 +702,34 @@ decryptGroup(
     return res;
 }
 
+void advanceMessageIndex(OlmOutboundGroupSession *session, size_t n) {
+    size_t bufferLen = olm_group_encrypt_message_length(session, 1);
+    uint8_t *buffer = (uint8_t *)malloc(bufferLen);
+    for (int i = 0; i < n; i++) {
+        size_t res =
+            olm_group_encrypt(session, (uint8_t *)" ", 1, buffer, bufferLen);
+        printf("res: %d\nerror: %s\n", res, olm_outbound_group_session_last_error(session));
+    }
+    free(buffer);
+}
+
 // encrypt and send room message
-void
+Str
 sendGroupMsg(
-    CURL *curl,
+    HttpCallbacks *http,
     OlmOutboundGroupSession *session,
     const char *roomId,
     const char *msg)
 {
-    char messageEvent[TMP_LEN];
+    // char *messageEvent =
+    //     mjson_aprintf(
+    //         "{"
+    //             "\"type\":\"m.room.message\","
+    //             "\"content\":{\"body\":\"%s\",\"msgtype\":\"m.text\"},"
+    //             "\"room_id\":\"%s\""
+    //         "}",
+    //         msg, roomId);
+    static char messageEvent[TMP_LEN];
     mjson_snprintf(messageEvent, TMP_LEN,
         "{"
             "\"type\":\"m.room.message\","
@@ -696,26 +737,29 @@ sendGroupMsg(
             "\"room_id\":\"%s\""
         "}",
         msg, roomId);
-    
-    char message[TMP_LEN];
-    size_t messageLen =
-        olm_group_encrypt(session,
-            (uint8_t *)messageEvent, strlen(messageEvent),
-            (uint8_t *)message, TMP_LEN);
-    char sessionId[TMP_LEN];
-    size_t sessionIdLen =
+
+    size_t messageLen = olm_group_encrypt_message_length(session, strlen(messageEvent));
+    void *message = malloc(messageLen);
+    olm_group_encrypt(session,
+        (uint8_t *)messageEvent, strlen(messageEvent),
+        (uint8_t *)message, messageLen);
+
+    size_t sessionIdLen = olm_outbound_group_session_id_length(session);
+    void *sessionId = malloc(sessionIdLen);
+    sessionIdLen =
         olm_outbound_group_session_id(
             session,
-            (uint8_t *)sessionId, TMP_LEN);
+            (uint8_t *)sessionId, sessionIdLen);
     char *encryptedMessage =
         createEncryptedMegolmEvent(
-            message, messageLen,
-            dId, dKey, sessionId, sessionIdLen);
+            (const char *)message, messageLen,
+            dId, dKey,
+            (const char *)sessionId, sessionIdLen);
 
-    char url[TMP_LEN];
+    char *url = (char *)malloc(128);
     sprintf(url, "https://matrix.org/_matrix/client/r0/rooms/%s/send/m.room.encrypted/%d",
         roomId, time(NULL));
-    curlPut(curl, url, encryptedMessage);
+    return http->put(http->data, url, strInitFromLen(encryptedMessage, strlen(encryptedMessage)));
 }
 
 // verify json string
