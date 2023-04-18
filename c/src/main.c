@@ -1,4 +1,4 @@
-//#include <stdio.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -67,8 +67,8 @@ int main() {
     free(olmAccBuffer);
     }
 
-    OlmSession *olmSess = olm_session(malloc(olm_session_size()));
-
+    OlmSession *olmSess =
+        olm_session(malloc(olm_session_size()));
     OlmOutboundGroupSession *outboundGroupSess =
         olm_outbound_group_session(malloc(olm_outbound_group_session_size()));
     OlmInboundGroupSession *inboundGroupSession =
@@ -502,6 +502,8 @@ int main() {
     puts("done");
 
     free((void *)olmAcc);
+    free((void *)outboundGroupSess);
+    free((void *)inboundGroupSession);
 
     curl_easy_cleanup(&http);
     curl_global_cleanup();
