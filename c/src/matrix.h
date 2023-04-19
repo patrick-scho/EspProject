@@ -98,7 +98,7 @@ Str claimOnetimeKey(HttpCallbacks *http, const char *theirDeviceId);
 // matrix session
 //---------------
 
-// login 
+// login with new device, using userId and password, setting deviceDisplayName as the name for the new device
 // free on callsite
 Str login(HttpCallbacks *http, const char *userId, const char *password, const char *deviceDisplayName);
 
@@ -108,6 +108,8 @@ Str login(HttpCallbacks *http, const char *userId, const char *password, const c
 // create a new Olm session from a claimed key
 void createOlmSession(OlmSession *olmSession, OlmAccount *olmAcc, const char *theirDeviceKey, const char *theirOnetimeKey);
 
+// pickle olm account, buffer is malloc'd and bufferLen contains buffer length
+// key/keyLen are a key used to encrypt the account
 size_t saveOlmSession(OlmSession *olmSession, void **buffer, size_t *bufferLen, const char *key, size_t keyLen);
 
 void loadOlmSession(OlmSession *olmSession, void *buffer, size_t bufferLen, const char *key, size_t keyLen);
@@ -130,13 +132,13 @@ size_t encrypt(OlmSession *olmSession, const char *body, char *buffer);
 // message events
 //---------------
 
-// create olm m.encrypted
+// create olm m.room.encrypted (https://spec.matrix.org/v1.5/client-server-api/#mroomencrypted)
 char * createEncryptedOlmEvent(const char *deviceKeyTo, const char *msg, size_t msgLen, const char *deviceIdFrom, const char *deviceKeyFrom);
 
-// create megolm m.encrypted
+// create megolm m.room.encrypted (https://spec.matrix.org/v1.5/client-server-api/#mroomencrypted)
 char * createEncryptedMegolmEvent(const char *msg, size_t msgLen, const char *deviceIdFrom, const char *deviceKeyFrom, const char *sessionId, size_t sessionIdLen);
 
-// m.room_key
+// create m.room_key (https://spec.matrix.org/v1.5/client-server-api/#mroom_key)
 void generateRoomKeyEvent(
     char *buffer, size_t bufferLen,
     const char *roomId, size_t roomIdLen,
@@ -169,7 +171,7 @@ Str sendMsgRoomKeyRequest(
     const char *sessionId,
     const char *requestId);
 
-// send a test message to a room
+// send a text message to a room
 Str sendMsg(HttpCallbacks *http, const char *roomId, const char *msg);
 
 // megolm session
@@ -181,6 +183,8 @@ size_t initInboundGroupSession(OlmInboundGroupSession *session, uint8_t *session
 // create new outbound megolm session
 bool initOutboundGroupSession(OlmOutboundGroupSession *session);
 
+// pickle megolm session, buffer is malloc'd and bufferLen contains buffer length
+// key/keyLen are a key used to encrypt the account
 size_t saveOutboundGroupSession(OlmOutboundGroupSession *session, void **buffer, size_t *bufferLen, const char *key, size_t keyLen);
 
 void loadOutboundGroupSession(OlmOutboundGroupSession *session, void *buffer, size_t bufferLen, const char *key, size_t keyLen);
@@ -191,6 +195,8 @@ size_t decryptGroup(
     uint8_t *plaintext, size_t plaintextLen,
     uint8_t *buffer, size_t bufferLen);
 
+// advance megolm messageindex, this is only needed if an outbound megolm session hasnt been saved
+// after encrypting/sending a message, which increases the message index internally
 void advanceMessageIndex(OlmOutboundGroupSession *session, size_t n);
 
 // encrypt and send room message
@@ -203,10 +209,11 @@ Str sendGroupMsg(
 // verification
 //-------------
 
-// verify json string
+// verify JSON string
 // transform into "canonical JSON", remove "signatures" & "unsigned" fields and then check signature
 size_t verify(const char *json, size_t jsonLen, const char *userId, const char *deviceId, const char *deviceKey);
 
+// sign JSON string
 void signJson(OlmAccount *olmAcc, char *s, int n, const char *str);
 
 #endif
