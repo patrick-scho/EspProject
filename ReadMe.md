@@ -65,6 +65,16 @@ Below are examples for how to send and receive encrypted messages from a room wh
 
 ### Sending encrypted messages
 
+In order to send messages in a room configured to use encryption, proceed as follows:
+
+1. login
+  - a
+  - b
+2. generate outbound session
+  - c
+  - d
+3. send m.room_key
+4. send encrypted message
 
 
 ### Receiving encrypted messages
