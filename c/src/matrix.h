@@ -23,6 +23,7 @@ static const char *dId = "ZGAUCOSULH";
 static const char *dKey = "5KjCB+kjNlRJhTFxxdfUcr/erraW08V0uZOEe7UYHTM";
 
 
+
 // utility
 //--------
 
@@ -48,6 +49,8 @@ bool loadFile(const char *filename, void **buffer, size_t *bufferLen);
 
 bool saveFile(const char *filename, void *buffer, size_t bufferLen);
 
+
+
 // olm account
 //------------
 
@@ -60,6 +63,8 @@ OlmAccount * createOlmAccount();
 size_t saveOlmAccount(OlmAccount *olmAcc, void **buffer, size_t *bufferLen, const void *key, size_t keyLen);
 
 void loadOlmAccount(OlmAccount *olmAcc, void *buffer, size_t bufferLen, const void *key, size_t keyLen);
+
+
 
 // keys
 //-----
@@ -95,6 +100,8 @@ void uploadKeys(HttpCallbacks *http, OlmAccount *olmAcc, const char *deviceKeys,
 // free on callsite
 Str claimOnetimeKey(HttpCallbacks *http, const char *theirDeviceId);
 
+
+
 // matrix session
 //---------------
 
@@ -128,6 +135,8 @@ size_t tryNewSessionFrom(OlmSession *olmSession, OlmAccount *olmAcc, const char 
 size_t decrypt(OlmSession *olmSession, const char *encrypted, char *buffer);
 
 size_t encrypt(OlmSession *olmSession, const char *body, char *buffer);
+
+
 
 // message events
 //---------------
@@ -174,6 +183,8 @@ Str sendMsgRoomKeyRequest(
 // send a text message to a room
 Str sendMsg(HttpCallbacks *http, const char *roomId, const char *msg);
 
+
+
 // megolm session
 //---------------
 
@@ -205,6 +216,8 @@ Str sendGroupMsg(
     OlmOutboundGroupSession *session,
     const char *roomId,
     const char *msg);
+
+
 
 // verification
 //-------------

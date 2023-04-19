@@ -62,20 +62,63 @@ delete client;
 
 The functions themselves are documented in `matrix.h`.
 Below are examples for how to send and receive encrypted messages from a room whose RoomId is known.
+The usage roughly corresponds to the description in https://matrix.org/docs/guides/end-to-end-encryption-implementation-guide/.
+Additionally, `c/src/main.c` can be viewed as an example of how to do most things the library supports.
 
 ### Sending encrypted messages
 
 In order to send messages in a room configured to use encryption, proceed as follows:
 
-1. login
-  - a
-  - b
-2. generate outbound session
-  - c
-  - d
-3. send m.room_key
-4. send encrypted message
+- set data in matrix.h
+  - uToken: user token (see login)
+  - uId: user id (@<name>:<server>, e.g. @pscho:matrix.org)
+  - dId: device id (see login)
+  - dKey: device key (see generating olm session)
+- initialize olm structs
+  - `OlmAccount *olmAcc = createOlmAccount();` (or load account using `loadOlmAccount`)
+  - `OlmSession *olmSess = olm_session(malloc(olm_session_size()));`
+  - `OlmOutboundGroupSession *outboundGroupSess = olm_outbound_group_session(malloc olm_outbound_group_session_size()));`
+- login
+  - call `login` with username, password and any name for the new device
+  - this returns a JSON object of the form ```
+    {
+        "access_token": "abc123",
+        "device_id": "GHTYAJCE",
+        "expires_in_ms": 60000,
+        "refresh_token": "def456",
+        "user_id": "@cheeky_monkey:matrix.org",
+        "well_known": {
+            "m.homeserver": {
+            "base_url": "https://example.org"
+            },
+            "m.identity_server": {
+            "base_url": "https://id.example.org"
+            }
+        }
+    }```
+  - access_token and device_id have to be copied into `matrix.h`
+- generate outbound megolm session
+  - call `initOutboundGroupSession`
+  - after using this session, save to a buffer using `saveOutboundGroupSession` and load the next time
+  - also save/load OlmAccount (and OlmSession)
+- generate olm session from onetime key
+  - select a device to send Megolm keys to. either select known device or list devices (see "list devices" in c/src/main.c)
+  - claim a onetime key using `claimOnetimeKey` with the deviceId
+  - get device key (see "list devices" c/src/main.c)
+  - call `createOlmSession` with the onetime key
+- send m.room_key
+  - get megolm session key ```
+        size_t keyLen = olm_outbound_group_session_key_length(outboundGroupSess);
+        uint8_t *key = (uint8_t *)malloc(keyLen);
+        olm_outbound_group_session_key(outboundGroupSess, key, keyLen);```
+  - the next three steps can be accomplished by calling `sendRoomKeyToDevice`
+  - create m.room_key using `generateRoomKeyEvent`
+  - encrypt using `createEncryptedOlmEvent`
+  - send to device using `sendToDevice`
+- send encrypted message
+  - send message using `sendGroupMsg`
 
 
 ### Receiving encrypted messages
 
+TODO
