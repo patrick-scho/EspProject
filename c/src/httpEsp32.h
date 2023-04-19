@@ -10,7 +10,7 @@ const char *uTokenHeaderStr = "Authorization: Bearer syt_cHNjaG8_qSvBDiGfoNLoypb
 
 
 Str
-curlPost(void *data, const char *url, Str body) {
+esp32Post(void *data, const char *url, Str body) {
     WiFiClientSecure *client = (WiFiClientSecure *)data;
 
     Str result = strInit();
@@ -51,7 +51,7 @@ curlPost(void *data, const char *url, Str body) {
 
 
 Str
-curlPut(void *data, const char *url, Str body) {
+esp32Put(void *data, const char *url, Str body) {
     WiFiClientSecure *client = (WiFiClientSecure *)data;
 
     Str result = strInit();
@@ -93,7 +93,7 @@ curlPut(void *data, const char *url, Str body) {
 }
 
 Str
-curlGet(void *data, const char *url) {
+esp32Get(void *data, const char *url) {
     WiFiClientSecure *client = (WiFiClientSecure *)data;
 
     Str result = strInit();
