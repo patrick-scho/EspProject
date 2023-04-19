@@ -266,7 +266,7 @@ void uploadKeys(HttpCallbacks *http, OlmAccount *olmAcc, const char *deviceKeys,
 
     prettyPrint(strInitFromLen(msg, strlen(msg)));
 
-    Str res = http->post(http->data, "https://matrix.org/_matrix/client/r0/keys/upload", strInitFromLen(msg, strlen(msg)));
+    Str res = http->post(http->data, MATRIX_SERVER "/_matrix/client/r0/keys/upload", strInitFromLen(msg, strlen(msg)));
     prettyPrint(res);
     strFree(&res);
 }
@@ -285,7 +285,7 @@ claimOnetimeKey(HttpCallbacks *http, const char *theirDeviceId) {
             "\"timeout\":10000"
         "}", theirDeviceId);
     Str res =
-        http->post(http->data, "https://matrix.org/_matrix/client/v3/keys/claim",
+        http->post(http->data, MATRIX_SERVER "/_matrix/client/v3/keys/claim",
             strInitFromLen(msg, strlen(msg)));
     return res;
 }
@@ -309,7 +309,7 @@ login(HttpCallbacks *http, const char *userId, const char *password, const char 
             userId, password, deviceDisplayName
     );
     Str loginRes =
-        http->post(http->data, "https://matrix.org/_matrix/client/v3/login", strInitFromLen(msg, strlen(msg)));
+        http->post(http->data, MATRIX_SERVER "/_matrix/client/v3/login", strInitFromLen(msg, strlen(msg)));
 
     return loginRes;
 }
@@ -516,7 +516,7 @@ generateRoomKeyEvent(
 Str
 sendToDevice(HttpCallbacks *http, const char *userId, const char *deviceId, const char *msgType, const char *msg, size_t msgLen) {
     static char url[URL_LEN];
-    sprintf(url, "https://matrix.org/_matrix/client/v3/sendToDevice/%s/%d", msgType, time(NULL));
+    sprintf(url, MATRIX_SERVER "/_matrix/client/v3/sendToDevice/%s/%d", msgType, time(NULL));
     static char toDeviceMsg[TMP_LEN];
     mjson_snprintf(toDeviceMsg, TMP_LEN,
          "{"
@@ -605,7 +605,7 @@ sendMsgRoomKeyRequest(
 Str
 sendMsg(HttpCallbacks *http, const char *roomId, const char *msg) {
     static char url[URL_LEN];
-    sprintf(url, "https://matrix.org/_matrix/client/r0/rooms/%s/send/m.room.message/%d", roomId, time(NULL));
+    sprintf(url, MATRIX_SERVER "/_matrix/client/r0/rooms/%s/send/m.room.message/%d", roomId, time(NULL));
 
     static char body[TMP_LEN];
     sprintf(body, "{\"body\":\"%s\",\"msgtype\":\"m.text\"}", msg);
@@ -728,7 +728,7 @@ sendGroupMsg(
             (const char *)sessionId, sessionIdLen);
 
     static char url[URL_LEN];
-    sprintf(url, "https://matrix.org/_matrix/client/r0/rooms/%s/send/m.room.encrypted/%d",
+    sprintf(url, MATRIX_SERVER "/_matrix/client/r0/rooms/%s/send/m.room.encrypted/%d",
         roomId, time(NULL));
     return http->put(http->data, url, strInitFromLen(encryptedMessage, strlen(encryptedMessage)));
 }

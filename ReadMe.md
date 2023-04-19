@@ -1,7 +1,5 @@
 # A C client library for Matrix.org
 
-## Introduction
-
 This is a C library implementing a small portion of the [Matrix.org](https://matrix.org) [Client-Server protocol](https://spec.matrix.org/latest/client-server-api/).
 It can be used to connect to a Matrix server and send/receive (end-to-end encrypted) messages.
 The implementation is largely platform independant, apart from HTTP GET/PUT/POST methods which have to be implemented for each platform.
@@ -19,12 +17,18 @@ The library itself is implemented in two files, `matrix.h/.c`, which can be foun
 Additionally, there are several files implementing the necessary HTTP methods.
 `c/src/httpStruct.h` contains the definitions that have to be implemented, and `httpCurl.h/httpEsp32.h` contain the specific implementations for those platforms.
 They include all the functions used to interface with a Matrix server.
+Currently the Matrix server is defined statically in `matrix.h` as `MATRIX_SERVER`.
 
 Most functions take a `HttpCallbacks` pointer, as defined in `httpStruct.h`.
-This has to be initialized prior to calling any function that send/receives data.
+This has to be initialized prior to calling any function that sends/receives data.
 When using CURL this looks like
 
 ```
+#include <httpStruct.h>
+#include <httpCurl.h>
+
+...
+
 curl_global_init(CURL_GLOBAL_DEFAULT);
 CURL *curl = curl_easy_init();
 
@@ -38,6 +42,11 @@ http.post = curlPost;
 and for the ESP32 it looks like
 
 ```
+#include <httpStruct.h>
+#include <httpEsp32.h>
+
+...
+
 WiFiClientSecure *client = new WiFiClientSecure();
 
 HttpCallbacks http;
@@ -45,7 +54,9 @@ http.data = client;
 http.get = esp32Get;
 http.put = esp32Put;
 http.post = esp32Post;
+
 ...
+
 delete client;
 ```
 
