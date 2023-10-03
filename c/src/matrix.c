@@ -157,7 +157,7 @@ getOnetimeKeys(OlmAccount *olmAcc) {
 }
 
 // get a string that can be uploaded to the server
-void getDeviceKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *deviceKeys) {
+void getDeviceKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *deviceKeys, const char *uId, const char * dId) {
     static char key_curve25519[KEY_LEN];
     static char key_ed25519[KEY_LEN];
 
@@ -182,7 +182,7 @@ void getDeviceKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *devi
         "}",
         dId, keysStr, uId);
 
-    signJson(olmAcc, s, n, unsigRes);
+    signJson(olmAcc, s, n, unsigRes, uId, dId);
 }
 
 // TODO: fallback
@@ -193,18 +193,18 @@ void getOnetimeKeyString(OlmAccount *olmAcc, char *s, size_t n, const char *keyI
         "}", keyId, key);
 }
 
-void getOnetimeKeyStringSigned(OlmAccount *olmAcc, char *s, size_t n, const char *keyId, const char *key) {
+void getOnetimeKeyStringSigned(OlmAccount *olmAcc, char *s, size_t n, const char *keyId, const char *key, const char *uId, const char * dId) {
     static char unsigRes[TMP_LEN];
     mjson_snprintf(unsigRes, TMP_LEN,
         "{"
             "\"key\":\"%s\""
         "}", key);
     static char signedRes[TMP_LEN];
-    signJson(olmAcc, signedRes, TMP_LEN, unsigRes);
+    signJson(olmAcc, signedRes, TMP_LEN, unsigRes, uId, dId);
     mjson_snprintf(s, n, "{\"signed_curve25519:%s\":%s}", keyId, signedRes);
 }
 
-void getOnetimeKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *onetimeKeys) {
+void getOnetimeKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *onetimeKeys, const char *uId, const char * dId) {
     const char *keys;
     int keysLen;
     mjson_find(onetimeKeys, strlen(onetimeKeys), "$.curve25519", &keys, &keysLen); // TODO: maybe generalize to ed25519 (mjson_next \/ )
@@ -221,7 +221,7 @@ void getOnetimeKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *one
         sprintf(key, "%.*s\0", vlen-2, keys + voff+1);
 
         static char newKeyStr[TMP_LEN];
-        getOnetimeKeyStringSigned(olmAcc, newKeyStr, TMP_LEN, keyId, key);
+        getOnetimeKeyStringSigned(olmAcc, newKeyStr, TMP_LEN, keyId, key, uId, dId);
 
         mjson_merge(result, strlen(result), newKeyStr, strlen(newKeyStr), mjson_print_fixed_buf, &mergeResult);
 
@@ -233,12 +233,14 @@ void getOnetimeKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *one
 
 // upload keys to server
 // only non-null keys are uploaded
-void uploadKeys(HttpCallbacks *http, OlmAccount *olmAcc, const char *deviceKeys, const char *fallbackKeys, const char *onetimeKeys) {
-    static char msg[TMP_LEN] = "{ ";
+void uploadKeys(HttpCallbacks *http, OlmAccount *olmAcc, const char *deviceKeys, const char *fallbackKeys, const char *onetimeKeys, const char *uId, const char * dId) {
+    static char msg[TMP_LEN];
+    memset(msg, 0, TMP_LEN);
+    strcpy(msg, "{ ");
 
     if (deviceKeys != NULL) {
         static char deviceKeysStr[TMP_LEN];
-        getDeviceKeysString(olmAcc, deviceKeysStr, TMP_LEN, deviceKeys);
+        getDeviceKeysString(olmAcc, deviceKeysStr, TMP_LEN, deviceKeys, uId, dId);
 
         mjson_snprintf(msg+strlen(msg), TMP_LEN-strlen(msg),
             "\"device_keys\":%s,",
@@ -246,7 +248,7 @@ void uploadKeys(HttpCallbacks *http, OlmAccount *olmAcc, const char *deviceKeys,
     }
     if (fallbackKeys != NULL) {
         static char fallbackKeysStr[TMP_LEN];
-        getOnetimeKeysString(olmAcc, fallbackKeysStr, TMP_LEN, fallbackKeys);
+        getOnetimeKeysString(olmAcc, fallbackKeysStr, TMP_LEN, fallbackKeys, uId, dId);
         
         mjson_snprintf(msg+strlen(msg), TMP_LEN-strlen(msg),
             "\"fallback_keys\":%s,",
@@ -254,7 +256,7 @@ void uploadKeys(HttpCallbacks *http, OlmAccount *olmAcc, const char *deviceKeys,
     }
     if (onetimeKeys != NULL) {
         static char onetimeKeysStr[TMP_LEN];
-        getOnetimeKeysString(olmAcc, onetimeKeysStr, TMP_LEN, onetimeKeys);
+        getOnetimeKeysString(olmAcc, onetimeKeysStr, TMP_LEN, onetimeKeys, uId, dId);
 
         mjson_snprintf(msg+strlen(msg), TMP_LEN-strlen(msg),
             "\"one_time_keys\":%s,",
@@ -393,22 +395,28 @@ tryNewSessionFrom(OlmSession *olmSession, OlmAccount *olmAcc, const char *theirD
 
 size_t
 decrypt(OlmSession *olmSession, const char *encrypted, char *buffer) {
-    size_t msgType = 0;
+    int msgType = olm_session_has_received_message(olmSession);
 
     static char encryptedCopy[TMP_LEN];
+    memset(encryptedCopy, 0, TMP_LEN);
     strcpy_s(encryptedCopy, TMP_LEN, encrypted);
 
     size_t decryptedBufferMaxLength =
         olm_decrypt_max_plaintext_length(
             olmSession, msgType, encryptedCopy, strlen(encryptedCopy));
 
+    memset(encryptedCopy, 0, TMP_LEN);
     strcpy_s(encryptedCopy, TMP_LEN, encrypted);
 
+    memset(buffer, 0, TMP_LEN);
     size_t decryptedBufferLength =
         olm_decrypt(
             olmSession, msgType,
             encryptedCopy, strlen(encryptedCopy),
             buffer, TMP_LEN);
+    if (decryptedBufferLength == olm_error()) {
+        printf("olm error: %s\n", olm_session_last_error(olmSession));
+    }
 
     return decryptedBufferLength;
 }
@@ -435,7 +443,9 @@ encrypt(OlmSession *olmSession, const char *body, char *buffer) {
 
 // create olm m.encrypted
 char *
-createEncryptedOlmEvent(const char *deviceKeyTo, const char *msg, size_t msgLen, const char *deviceIdFrom, const char *deviceKeyFrom) {
+createEncryptedOlmEvent(OlmSession * olmSess, const char *deviceKeyTo, const char *msg, size_t msgLen, const char *deviceIdFrom, const char *deviceKeyFrom) {
+    int msgType = olm_session_has_received_message(olmSess);
+    
     static char res[TMP_LEN];
     mjson_snprintf(res, TMP_LEN,
         "{"
@@ -443,13 +453,13 @@ createEncryptedOlmEvent(const char *deviceKeyTo, const char *msg, size_t msgLen,
                 "\"ciphertext\":{"
                     "\"%s\":{"
                         "\"body\":\"%.*s\","
-                        "\"type\":0"
+                        "\"type\":%d"
                     "}"
                 "},"
                 "\"device_id\":\"%s\","
                 "\"sender_key\":\"%s\""
         "}",
-        deviceKeyTo, msgLen, msg, deviceIdFrom, deviceKeyFrom
+        deviceKeyTo, msgLen, msg, msgType, deviceIdFrom, deviceKeyFrom
     );
     return res;
 }
@@ -558,6 +568,82 @@ sendRoomKeyToDevice(
 
     char *encryptedEvent =
         createEncryptedOlmEvent(
+            olmSess,
+            deviceKeyTo,
+            buffer, bufferLen,
+            deviceIdFrom, deviceKeyFrom);
+    
+    printf("sending\n%s\nto %s\n", encryptedEvent, deviceIdTo);
+
+    return sendToDevice(http,
+        userId, deviceIdTo, "m.room.encrypted",
+        encryptedEvent, strlen(encryptedEvent));
+}
+
+Str
+sendRoomKeyToDeviceTest(
+    HttpCallbacks *http,
+    const char *userId,
+    const char *deviceIdTo,
+    const char *deviceKeyTo,
+    const char *deviceIdFrom,
+    const char *deviceKeyFrom,
+    const char *roomId, size_t roomIdLen,
+    const char *sessionId, size_t sessionIdLen,
+    const char *sessionKey, size_t sessionKeyLen)
+{
+    static char eventBuffer[TMP_LEN];
+    generateRoomKeyEvent(eventBuffer, TMP_LEN,
+        roomId, roomIdLen,
+        sessionId, sessionIdLen,
+        sessionKey, sessionKeyLen);    
+    
+    printf("sending\n%s\nto %s\n", eventBuffer, deviceIdTo);
+
+    return sendToDevice(http,
+        userId, deviceIdTo, "m.room.encrypted",
+        eventBuffer, strlen(eventBuffer));
+}
+
+Str
+forwardRoomKeyToDevice(
+    HttpCallbacks *http,
+    OlmSession *olmSess,
+    const char *userId,
+    const char *deviceIdTo,
+    const char *deviceKeyTo,
+    const char *deviceIdFrom,
+    const char *deviceKeyFrom,
+    const char *signingKeyFrom,
+    const char *roomId, size_t roomIdLen,
+    const char *sessionId, size_t sessionIdLen,
+    const char *sessionKey, size_t sessionKeyLen)
+{
+    static char eventBuffer[TMP_LEN];
+    mjson_snprintf(eventBuffer, TMP_LEN,
+        "{"
+          "\"algorithm\":\"m.megolm.v1.aes-sha2\","
+          "\"forwarding_curve25519_key_chain\":[],"
+          "\"room_id\":\"%.*s\","
+          "\"sender_claimed_ed25519_key\":\"%s\","
+          "\"sender_key\":\"%s\","
+          "\"session_id\":\"%.*s\","
+          "\"session_key\":\"%.*s\","
+        "}",
+        roomIdLen, roomId,
+        signingKeyFrom,
+        deviceKeyFrom,
+        sessionIdLen, sessionId,
+        sessionKeyLen, sessionKey
+    );   
+
+    static char buffer[TMP_LEN];
+    size_t bufferLen =
+        encrypt(olmSess, eventBuffer, buffer);
+
+    char *encryptedEvent =
+        createEncryptedOlmEvent(
+            olmSess,
             deviceKeyTo,
             buffer, bufferLen,
             deviceIdFrom, deviceKeyFrom);
@@ -698,7 +784,9 @@ sendGroupMsg(
     HttpCallbacks *http,
     OlmOutboundGroupSession *session,
     const char *roomId,
-    const char *msg)
+    const char *msg,
+    const char *dId,
+    const char *dKey)
 {
     static char messageEvent[TMP_LEN];
     mjson_snprintf(messageEvent, TMP_LEN,
@@ -781,7 +869,7 @@ verify(const char *json, size_t jsonLen, const char *userId, const char *deviceI
 }
 
 void
-signJson(OlmAccount *olmAcc, char *s, int n, const char *str) {
+signJson(OlmAccount *olmAcc, char *s, int n, const char *str, const char *uId, const char * dId) {
     static char sig[SIG_LEN];
     const char *sigKeyId = dId;
     size_t res = olm_account_sign(olmAcc, str, strlen(str), sig, SIG_LEN);

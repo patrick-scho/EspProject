@@ -6,7 +6,11 @@
 #include "httpStruct.h"
 
 
-const char *uTokenHeaderStr = "Authorization: Bearer syt_cHNjaG8_qSvBDiGfoNLoypbbQKVB_3CYp5A";
+static char uTokenHeaderStr[1024] = "";
+
+void httpSetAuthorizationToken(const char * token) {
+    snprintf(uTokenHeaderStr, 1024, "Authorization: Bearer %s", token);
+}
 
 typedef struct {
     Str str;
@@ -50,11 +54,12 @@ curlPerform(CURL *curl) {
 
 Str
 curlPost(void *data, const char *url, Str body) {
-    CURL *curl = (CURL *)data;
+    // CURL *curl = (CURL *)data;
+    CURL *curl = curl_easy_init();
 
     CURLcode res;
     
-    Str result = strInit();
+    Str result = strNew();
     
     if(curl) {
         curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -75,6 +80,8 @@ curlPost(void *data, const char *url, Str body) {
             fprintf(stderr, "curl_easy_perform() failed: %s\n",
                 curl_easy_strerror(res));
     }
+
+    curl_easy_cleanup(curl);
     
 
     return result;
@@ -83,11 +90,12 @@ curlPost(void *data, const char *url, Str body) {
 
 Str
 curlPut(void *data, const char *url, Str body) {
-    CURL *curl = (CURL *)data;
+    // CURL *curl = (CURL *)data;
+    CURL *curl = curl_easy_init();
 
     CURLcode res;
     
-    Str result = strInit();
+    Str result = strNew();
 
     if(curl) {
         curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -115,16 +123,19 @@ curlPut(void *data, const char *url, Str body) {
                 curl_easy_strerror(res));
     }
 
+    curl_easy_cleanup(curl);
+
     return result;
 }
 
 Str
 curlGet(void *data, const char *url) {
-    CURL *curl = (CURL *)data;
+    // CURL *curl = (CURL *)data;
+    CURL *curl = curl_easy_init();
 
     CURLcode res;
 
-    Str result = strInit();
+    Str result = strNew();
 
     if(curl) {
         curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -143,6 +154,8 @@ curlGet(void *data, const char *url) {
             fprintf(stderr, "curl_easy_perform() failed: %s\n",
                 curl_easy_strerror(res));
     }
+
+    curl_easy_cleanup(curl);
 
     return result;
 }

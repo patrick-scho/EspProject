@@ -17,10 +17,10 @@
 #define ONETIME_KEYS_BUF_LEN 1024
 #define MATRIX_SERVER "https://matrix.org"
 
-static const char *uToken = "syt_cHNjaG8_qSvBDiGfoNLoypbbQKVB_3CYp5A";
-static const char *uId = "@pscho:matrix.org";
-static const char *dId = "ZGAUCOSULH";
-static const char *dKey = "5KjCB+kjNlRJhTFxxdfUcr/erraW08V0uZOEe7UYHTM";
+// static const char *uToken = "syt_cHNjaG8_GFHpSzDluNzcaAzwYAve_0AdLf2";
+// static const char *uId = "@pscho:matrix.org";
+// static const char *dId = "LLWIVCOHVC";
+// static const char *dKey = "v0fe9mYQltvDmvZmBZFCZvHu6nke5Uhke0tN2w5VEDs";
 
 
 
@@ -81,20 +81,20 @@ void generateOnetimeKeys(OlmAccount *olmAcc, size_t nKeys);
 char * getOnetimeKeys(OlmAccount *olmAcc);
 
 // get a string that can be uploaded to the server
-void getDeviceKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *deviceKeys);
+void getDeviceKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *deviceKeys, const char *uId, const char * dId);
 
 // get JSON object for one onetime key, store in buffer s of length n
 void getOnetimeKeyString(OlmAccount *olmAcc, char *s, size_t n, const char *keyId, const char *key);
 
 // get JSON object for one signed onetime key, store in buffer s of length n
-void getOnetimeKeyStringSigned(OlmAccount *olmAcc, char *s, size_t n, const char *keyId, const char *key);
+void getOnetimeKeyStringSigned(OlmAccount *olmAcc, char *s, size_t n, const char *keyId, const char *key, const char *uId, const char * dId);
 
 // get JSON object for uploading to a server, from a JSON object returned from getOnetimeKeys
-void getOnetimeKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *onetimeKeys);
+void getOnetimeKeysString(OlmAccount *olmAcc, char *s, size_t n, const char *onetimeKeys, const char *uId, const char * dId);
 
 // upload keys to server
 // only non-null keys are uploaded
-void uploadKeys(HttpCallbacks *http, OlmAccount *olmAcc, const char *deviceKeys, const char *fallbackKeys, const char *onetimeKeys);
+void uploadKeys(HttpCallbacks *http, OlmAccount *olmAcc, const char *deviceKeys, const char *fallbackKeys, const char *onetimeKeys, const char *uId, const char * dId);
 
 // claim a onetime key for the specified device
 // free on callsite
@@ -142,7 +142,7 @@ size_t encrypt(OlmSession *olmSession, const char *body, char *buffer);
 //---------------
 
 // create olm m.room.encrypted (https://spec.matrix.org/v1.5/client-server-api/#mroomencrypted)
-char * createEncryptedOlmEvent(const char *deviceKeyTo, const char *msg, size_t msgLen, const char *deviceIdFrom, const char *deviceKeyFrom);
+char * createEncryptedOlmEvent(OlmSession * olmSess, const char *deviceKeyTo, const char *msg, size_t msgLen, const char *deviceIdFrom, const char *deviceKeyFrom);
 
 // create megolm m.room.encrypted (https://spec.matrix.org/v1.5/client-server-api/#mroomencrypted)
 char * createEncryptedMegolmEvent(const char *msg, size_t msgLen, const char *deviceIdFrom, const char *deviceKeyFrom, const char *sessionId, size_t sessionIdLen);
@@ -165,6 +165,32 @@ Str sendRoomKeyToDevice(
     const char *deviceKeyTo,
     const char *deviceIdFrom,
     const char *deviceKeyFrom,
+    const char *roomId, size_t roomIdLen,
+    const char *sessionId, size_t sessionIdLen,
+    const char *sessionKey, size_t sessionKeyLen);
+    
+Str sendRoomKeyToDeviceTest(
+    HttpCallbacks *http,
+    const char *userId,
+    const char *deviceIdTo,
+    const char *deviceKeyTo,
+    const char *deviceIdFrom,
+    const char *deviceKeyFrom,
+    const char *roomId, size_t roomIdLen,
+    const char *sessionId, size_t sessionIdLen,
+    const char *sessionKey, size_t sessionKeyLen);
+
+
+Str
+forwardRoomKeyToDevice(
+    HttpCallbacks *http,
+    OlmSession *olmSess,
+    const char *userId,
+    const char *deviceIdTo,
+    const char *deviceKeyTo,
+    const char *deviceIdFrom,
+    const char *deviceKeyFrom,
+    const char *signingKeyFrom,
     const char *roomId, size_t roomIdLen,
     const char *sessionId, size_t sessionIdLen,
     const char *sessionKey, size_t sessionKeyLen);
@@ -215,7 +241,9 @@ Str sendGroupMsg(
     HttpCallbacks *http,
     OlmOutboundGroupSession *session,
     const char *roomId,
-    const char *msg);
+    const char *msg,
+    const char *dId,
+    const char *dKey);
 
 
 
@@ -227,7 +255,7 @@ Str sendGroupMsg(
 size_t verify(const char *json, size_t jsonLen, const char *userId, const char *deviceId, const char *deviceKey);
 
 // sign JSON string
-void signJson(OlmAccount *olmAcc, char *s, int n, const char *str);
+void signJson(OlmAccount *olmAcc, char *s, int n, const char *str, const char *uId, const char * dId);
 
 #endif
 

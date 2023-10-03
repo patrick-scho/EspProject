@@ -49,6 +49,11 @@ static Str strInit()
     return strInitFromLen(NULL, 0);
 }
 
+static Str strNew()
+{
+    return strDup(strInit());
+}
+
 static void strFree(Str *str)
 {
     if (str->allocated)

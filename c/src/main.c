@@ -42,11 +42,16 @@ void promptStr(const char *str, char *buffer) {
 }
 
 
+char accessToken[128] = "syt_cHNjaG8_YgeIrSAmZHTOCAKWAQkc_27kGmc";
+char deviceId[128] = "CWBZBHMVDA";
+//char deviceKey[128] = "8ctZOEZG+4raiLcVxGC/A6iq88QxL2bd4De1PiWIHiI";
+char userId[128] = "@pscho:matrix.org";
 
 
 int main() {
     srand(time(NULL));
 
+    httpSetAuthorizationToken(accessToken);
     
     curl_global_init(CURL_GLOBAL_DEFAULT);
     CURL *curl = curl_easy_init();
@@ -56,15 +61,14 @@ int main() {
     http.get = curlGet;
     http.put = curlPut;
     http.post = curlPost;
-    
 
     OlmAccount *olmAcc = createOlmAccount();
     // load previously stored OlmAccount
     {
-    void *olmAccBuffer; size_t olmAccBufferLen;
-    loadFile("olmacc.dat", &olmAccBuffer, &olmAccBufferLen);
-    loadOlmAccount(olmAcc, olmAccBuffer, olmAccBufferLen, "abcde", 5);
-    free(olmAccBuffer);
+    // void *olmAccBuffer; size_t olmAccBufferLen;
+    // loadFile("olmacc.dat", &olmAccBuffer, &olmAccBufferLen);
+    // loadOlmAccount(olmAcc, olmAccBuffer, olmAccBufferLen, "abcde", 5);
+    // free(olmAccBuffer);
     }
 
     OlmSession *olmSess =
@@ -73,7 +77,6 @@ int main() {
         olm_outbound_group_session(malloc(olm_outbound_group_session_size()));
     OlmInboundGroupSession *inboundGroupSession =
         olm_inbound_group_session(malloc(olm_inbound_group_session_size()));
-
 
     char msg[TMP_LEN];
 
@@ -84,9 +87,9 @@ int main() {
         if (command(msg, "quit"))
             break;
         if (command(msg, "upload device keys"))
-            uploadKeys(&http, olmAcc, (const char *)getDeviceKeys(olmAcc), NULL, NULL);
+            uploadKeys(&http, olmAcc, (const char *)getDeviceKeys(olmAcc), NULL, NULL, userId, deviceId);
         if (command(msg, "upload onetime keys"))
-            uploadKeys(&http, olmAcc, NULL, NULL, (const char *)getOnetimeKeys(olmAcc));
+            uploadKeys(&http, olmAcc, NULL, NULL, (const char *)getOnetimeKeys(olmAcc), userId, deviceId);
         if (command(msg, "generate onetime keys")) {
             int n = promptInt("how many?");
             generateOnetimeKeys(olmAcc, n);
@@ -111,6 +114,11 @@ int main() {
             prettyPrint(res);
             strFree(&res);
         }
+        if (command(msg, "set values")) {
+            promptStr("Device ID", deviceId);
+            promptStr("Access Token", accessToken);
+            httpSetAuthorizationToken(accessToken);
+        }
         if (command(msg, "save olmacc")) {
             char key[TMP_LEN];
             promptStr("key", key);
@@ -127,7 +135,7 @@ int main() {
             loadOlmAccount(olmAcc, pickled, strlen(pickled), key, strlen(key));
         }
         if (command(msg, "list devices")) {
-            Str membersRes = curlPost(&http, "https://matrix.org/_matrix/client/v3/keys/query", strInitFrom("{\"device_keys\":{\"@pscho:matrix.org\":[]}}"));
+            Str membersRes = curlPost(curl, "https://matrix.org/_matrix/client/v3/keys/query", strInitFrom("{\"device_keys\":{\"@pscho:matrix.org\":[]}}"));
             prettyPrint(membersRes);
             strFree(&membersRes);
         }
@@ -139,7 +147,7 @@ int main() {
             strFree(&onetimeKey);
         }
         if (command(msg, "sync")) {
-            Str syncRes = curlGet(&http, "https://matrix.org/_matrix/client/r0/sync");
+            Str syncRes = curlGet(curl, "https://matrix.org/_matrix/client/r0/sync");
             //prettyPrint(syncRes);
             //printf("%.*s\n", syncRes.size, syncRes.str);
             FILE *f = fopen("sync.json", "wb");
@@ -148,7 +156,7 @@ int main() {
             strFree(&syncRes);
         }
         if (command(msg, "todevice")) {
-            Str syncRes = curlGet(&http, "https://matrix.org/_matrix/client/r0/sync");
+            Str syncRes = curlGet(curl, "https://matrix.org/_matrix/client/r0/sync");
             const char *to_device_str; int to_device_str_len;
             mjson_find(syncRes.str, syncRes.len, "$.to_device", &to_device_str, &to_device_str_len);
             prettyPrint(strInitFromLen(to_device_str, to_device_str_len));
@@ -156,8 +164,12 @@ int main() {
         if (command(msg, "dummy")) {
             char deviceIdTo[TMP_LEN];
             char deviceKeyTo[TMP_LEN];
+            char deviceIdFrom[TMP_LEN];
+            char deviceKeyFrom[TMP_LEN];
             promptStr("device id to", deviceIdTo);
             promptStr("device key to", deviceKeyTo);
+            promptStr("device id from", deviceIdFrom);
+            promptStr("device key from", deviceKeyFrom);
 
             char dummyMsg[TMP_LEN];
             mjson_snprintf(dummyMsg, TMP_LEN,
@@ -170,30 +182,34 @@ int main() {
             size_t dummyMsgEncryptedLen =
                 encrypt(olmSess, dummyMsg, dummyMsgEncrypted);
             char *encryptedEvent =
-                createEncryptedOlmEvent(deviceKeyTo, dummyMsgEncrypted, dummyMsgEncryptedLen, dId, dKey);
+                createEncryptedOlmEvent(0, deviceKeyTo, dummyMsgEncrypted, dummyMsgEncryptedLen, deviceIdFrom, deviceKeyFrom);
             printf("%s\n", encryptedEvent);
             Str res =
-                sendToDevice(&http, uId, deviceIdTo, "m.encrypted", encryptedEvent, strlen(encryptedEvent));
+                sendToDevice(&http, userId, deviceIdTo, "m.encrypted", encryptedEvent, strlen(encryptedEvent));
             prettyPrint(res);
             strFree(&res);
         }
         if (command(msg, "keyshare")) {
             char deviceIdTo[TMP_LEN];
+            char deviceIdFrom[TMP_LEN];
+            char deviceKeyFrom[TMP_LEN];
             char roomId[TMP_LEN];
             char sessionId[TMP_LEN];
             char requestId[TMP_LEN];
 
             promptStr("deviceIdTo", deviceIdTo);
+            promptStr("deviceIdFrom", deviceIdFrom);
+            promptStr("deviceKeyFrom", deviceKeyFrom);
             promptStr("roomId", roomId);
             promptStr("sessionId", sessionId);
             promptStr("requestId", requestId);
             Str res =
                 sendMsgRoomKeyRequest(
                     &http,
-                    uId,
+                    userId,
                     deviceIdTo,
-                    dId,
-                    dKey,
+                    deviceIdFrom,
+                    deviceKeyFrom,
                     roomId,
                     sessionId,
                     requestId
@@ -377,6 +393,8 @@ int main() {
             uint8_t *key = (uint8_t *)malloc(keyLen);
             olm_outbound_group_session_key(outboundGroupSess, key, keyLen);
 
+            printf("id: %.*s\nkey: %.*s\n", idLen, id, keyLen, key);
+
             // create inbound session
             olm_init_inbound_group_session(inboundGroupSession, key, keyLen);
         }
@@ -446,7 +464,7 @@ int main() {
                 printf("device key: %.*s\tdevice id: %.*s\n", deviceIdLen, deviceId, deviceKeyLen, deviceKey);
                 sendRoomKeyToDevice(&http, olmSess,
                     "@pscho:matrix.org",
-                    deviceId, deviceKey, dId, dKey,
+                    deviceId, deviceKey, deviceId, deviceKey,
                     roomId, strlen(roomId),
                     sessionId, strlen(sessionId),
                     sessionKey, strlen(sessionKey));
@@ -454,13 +472,17 @@ int main() {
             strFree(&devicesRes);
         }
         if (command(msg, "send room key")) {
-            char deviceId[TMP_LEN];
-            char deviceKey[TMP_LEN];
+            char deviceIdTo[TMP_LEN];
+            char deviceKeyTo[TMP_LEN];
+            char deviceIdFrom[TMP_LEN];
+            char deviceKeyFrom[TMP_LEN];
             char roomId[TMP_LEN];
             char sessionId[TMP_LEN];
             char sessionKey[TMP_LEN];
-            promptStr("deviceId", deviceId);
-            promptStr("deviceKey", deviceKey);
+            promptStr("deviceIdTo", deviceIdTo);
+            promptStr("deviceKeyTo", deviceKeyTo);
+            promptStr("deviceIdFrom", deviceIdFrom);
+            promptStr("deviceKeyFrom", deviceKeyFrom);
             promptStr("roomId", roomId);
             promptStr("sessionId", sessionId);
             promptStr("sessionKey", sessionKey);
@@ -468,7 +490,36 @@ int main() {
             Str sendRes =
                 sendRoomKeyToDevice(&http, olmSess,
                     "@pscho:matrix.org",
-                    deviceId, deviceKey, dId, dKey,
+                    deviceIdTo, deviceKeyTo, deviceIdFrom, deviceKeyFrom,
+                    roomId, strlen(roomId),
+                    (char *)sessionId, strlen(sessionId),
+                    (char *)sessionKey, strlen(sessionKey));
+            prettyPrint(sendRes);
+            strFree(&sendRes);
+        }
+        if (command(msg, "forward room key")) {
+            char deviceIdTo[TMP_LEN];
+            char deviceKeyTo[TMP_LEN];
+            char deviceIdFrom[TMP_LEN];
+            char deviceKeyFrom[TMP_LEN];
+            char signingKeyFrom[TMP_LEN];
+            char roomId[TMP_LEN];
+            char sessionId[TMP_LEN];
+            char sessionKey[TMP_LEN];
+            promptStr("deviceIdTo", deviceIdTo);
+            promptStr("deviceKeyTo", deviceKeyTo);
+            promptStr("deviceIdFrom", deviceIdFrom);
+            promptStr("deviceKeyFrom", deviceKeyFrom);
+            promptStr("signingKeyFrom", signingKeyFrom);
+            promptStr("roomId", roomId);
+            promptStr("sessionId", sessionId);
+            promptStr("sessionKey", sessionKey);
+
+            Str sendRes =
+                forwardRoomKeyToDevice(&http, olmSess,
+                    "@pscho:matrix.org",
+                    deviceIdTo, deviceKeyTo, deviceIdFrom, deviceKeyFrom,
+                    signingKeyFrom,
                     roomId, strlen(roomId),
                     (char *)sessionId, strlen(sessionId),
                     (char *)sessionKey, strlen(sessionKey));
@@ -478,10 +529,14 @@ int main() {
         if (command(msg, "send megolm")) {
             char roomId[TMP_LEN];
             char msg[TMP_LEN];
+            char deviceIdFrom[TMP_LEN];
+            char deviceKeyFrom[TMP_LEN];
             promptStr("roomId", roomId);
             promptStr("msg", msg);
+            promptStr("device id from", deviceIdFrom);
+            promptStr("device key from", deviceKeyFrom);
 
-            sendGroupMsg(&http, outboundGroupSess, roomId, msg);
+            sendGroupMsg(&http, outboundGroupSess, roomId, msg, deviceIdFrom, deviceKeyFrom);
         }
         if (command(msg, "advance megolm")) {
             int n = promptInt("n");
@@ -493,19 +548,20 @@ int main() {
 
     // store OlmAccount for later
     {
-    void *olmAccBuffer; size_t olmAccBufferLen;
-    saveOlmAccount(olmAcc, &olmAccBuffer, &olmAccBufferLen, "abcde", 5);
-    saveFile("olmacc.dat", olmAccBuffer, olmAccBufferLen);
-    free(olmAccBuffer);
+    // void *olmAccBuffer; size_t olmAccBufferLen;
+    // saveOlmAccount(olmAcc, &olmAccBuffer, &olmAccBufferLen, "abcde", 5);
+    // saveFile("olmacc.dat", olmAccBuffer, olmAccBufferLen);
+    // free(olmAccBuffer);
     }
 
     puts("done");
 
-    free((void *)olmAcc);
+    free((void *)olmSess);
     free((void *)outboundGroupSess);
     free((void *)inboundGroupSession);
+    free((void *)olmAcc);
 
-    curl_easy_cleanup(&http);
+    curl_easy_cleanup(curl);
     curl_global_cleanup();
 
     return 0;
